@@ -84,11 +84,16 @@ export class MeService {
 
     const usingListP = this.db.execute(sql`
       SELECT
-        m.id               AS music_id,
+        m.id              AS music_id,
         m.title,
         m.artist,
-        m.cover_image_url,
-        NULL::timestamptz  AS last_used_at
+        CASE
+          WHEN m.cover_image_url IS NULL OR m.cover_image_url = '' THEN NULL
+          WHEN m.cover_image_url LIKE 'http%' THEN m.cover_image_url
+          WHEN m.cover_image_url LIKE '/uploads/%' THEN m.cover_image_url
+          ELSE '/uploads/images/' || m.cover_image_url
+        END               AS cover_image_url,
+        NULL::timestamptz AS last_used_at
       FROM ${company_musics} cm
       JOIN ${musics} m ON m.id = cm.music_id
       WHERE cm.company_id = ${companyId}

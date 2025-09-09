@@ -52,8 +52,7 @@ export class ExploreService {
         m.inst,
         (m.lyrics_text IS NOT NULL OR m.lyrics_file_path IS NOT NULL) AS has_lyrics_raw,
         m."grade_required" AS grade_required,
-        -- 참고: SQL의 can_use는 등급만 반영(게스트는 아래 TS에서 보정)
-        CASE WHEN (SELECT lvl FROM my) = 0 THEN (m."grade_required" = 0) ELSE TRUE END AS can_use_sql,
+          CASE WHEN (SELECT lvl FROM my) = 0 THEN (m."grade_required" = 0) ELSE TRUE END AS can_use_sql,
         mm.reward_per_play,
         mm.total_reward_count,
         mm.remaining_reward_count,
@@ -68,7 +67,6 @@ export class ExploreService {
       LIMIT 60
     `);
 
-    // ✅ 배열로 정규화: 드라이버에 따라 result가 배열 or {rows:[...]} 일 수 있음
     const rows: any[] = Array.isArray(result) ? result : (result?.rows ?? []);
     if (!Array.isArray(rows)) {
       throw new Error('Unexpected DB result shape from db.execute(sql`...`)');

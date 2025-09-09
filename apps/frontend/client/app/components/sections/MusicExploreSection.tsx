@@ -2,11 +2,12 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { fetchCategories, fetchPopular } from '@/lib/api/musics'; // 카테고리 전환용은 유지
+import { fetchCategories, fetchMusics, fetchMusicDetail, useMusic } from '@/lib/api/musics';
 import type { Category } from '@/lib/types/music';
 import MusicDetailModal, { type MusicDetail } from '../sections/MusicDetailModal';
 
 import { getExploreSections, type ExploreTrack } from '@/lib/api/explone';
+import { resolveImageUrl } from '@/app/utils/resolveImageUrl';
 
 /* ---------------- Types ---------------- */
 type Tone = 'emerald' | 'amber' | 'sky';
@@ -21,7 +22,7 @@ type Item = {
   category?: string;
   tags?: string[];
 };
-type BadgeProps = { tone?: Tone; children: React.ReactNode; shine?: boolean };
+type BadgeProps = { tone?: Tone; children: React.ReactNode; shine?: boolean; className?: string };
 type CardProps = Item & { onOpen?: (it: Item) => void };
 type ShelfProps = {
   title: string;
@@ -63,9 +64,9 @@ const Star: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   </svg>
 );
 
-const Badge: React.FC<BadgeProps> = ({ tone = 'emerald', children, shine = false }) => {
+const Badge: React.FC<BadgeProps> = ({ tone = 'emerald', children, shine = false, className = '' }) => {
   const base =
-    'relative inline-flex items-center gap-1 rounded-full px-3 py-[6px] text-[13px] font-medium overflow-hidden';
+    'relative inline-flex items-center gap-1 rounded-full px-2 py-1 text-[12px] font-medium leading-none whitespace-nowrap overflow-hidden';
   const toneCls =
     tone === 'emerald'
       ? ' bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
@@ -73,7 +74,7 @@ const Badge: React.FC<BadgeProps> = ({ tone = 'emerald', children, shine = false
       ? ' bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
       : ' bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300';
   return (
-    <span className={base + toneCls}>
+    <span className={`${base} ${toneCls} ${className}`}>
       {children}
       {shine && (
         <span className="pointer-events-none absolute inset-0 -translate-x-full animate-shine bg-gradient-to-r from-transparent via-white/60 to-transparent" />
@@ -93,7 +94,10 @@ const Card: React.FC<CardProps> = ({
   onOpen,
   ...raw
 }) => (
-  <div className="group shrink-0 w-[315px] overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm transition hover:shadow-md snap-start">
+  <div
+    className="group shrink-0 w-[315px] overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm transition hover:shadow-md snap-start flex flex-col"
+    data-card
+  >
     <button
       type="button"
       onClick={() =>
@@ -109,35 +113,40 @@ const Card: React.FC<CardProps> = ({
           tags: (raw as any).tags,
         })
       }
-      className="block w-full text-left"
+      className="block w-full text-left flex flex-col flex-1"
     >
       {/* 4:3 비율 유지 */}
       <div className="relative w-full aspect-[4/3] overflow-hidden">
-        <img src={cover} alt={`${title} cover`} className="h-full w-full object-cover" loading="lazy" />
+        <img
+          src={resolveImageUrl(cover, 'music')}
+          alt={`${title} cover`}
+          className="h-full w-full object-cover"
+          loading="lazy"
+        />
         <span className="pointer-events-none absolute inset-0 grid place-items-center opacity-0 transition group-hover:opacity-100">
           <span className="rounded-full bg-black/70 px-4 py-2 text-xs tracking-wide text-white">자세히 보기</span>
         </span>
       </div>
 
-      <div className="p-4">
+      <div className="p-4 flex flex-col flex-1">
         <div className="cursor-pointer text-[15px] font-semibold leading-tight line-clamp-2 group-hover:underline text-zinc-900 dark:text-white">
           {title}
         </div>
         <div className="mt-0.5 text-[13px] text-zinc-500 dark:text-white/70">{subtitle}</div>
 
         {/* 리워드 배지 */}
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex gap-2 h-8 items-center overflow-hidden flex-nowrap">
           <Badge tone="emerald">
-            <Star className="h-4 w-4" /> <span>1회 {playCount}</span>
+            <Star className="h-3.5 w-3.5" /> <span>1회 {playCount}</span>
           </Badge>
           <Badge tone="amber">월총 {monthTotal}</Badge>
           <Badge tone="sky">남음 {remain}</Badge>
         </div>
 
         {/* 카테고리 & 태그 */}
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-3 flex flex-wrap gap-1.5 min-h-[28px]">
           {(raw as any).category && (
-            <span className="inline-flex items-center rounded-full border border-zinc-200 dark:border-white/15 bg-zinc-50 dark:bg-white/10 px-2.5 py-0.5 text-[12px] text-zinc-700 dark:text-white/80">
+            <span className="inline-flex items-center rounded-full border border-zinc-200 dark:border-white/15 bg-zinc-50 dark:bg-white/10 px-2 py-[3px] text-[12px] text-zinc-700 dark:text-white/80 whitespace-nowrap">
               {(raw as any).category}
             </span>
           )}
@@ -145,7 +154,7 @@ const Card: React.FC<CardProps> = ({
             (raw as any).tags.slice(0, 3).map((t: string) => (
               <span
                 key={t}
-                className="inline-flex items-center rounded-full border border-zinc-200 dark:border-white/15 bg-white dark:bg-white/10 px-2.5 py-0.5 text-[12px] text-zinc-700 dark:text-white/80"
+                className="inline-flex items-center rounded-full border border-zinc-200 dark:border-white/15 bg-white dark:bg-white/10 px-2 py-[3px] text-[12px] text-zinc-700 dark:text-white/80 whitespace-nowrap"
               >
                 #{t}
               </span>
@@ -297,14 +306,14 @@ export default function MusicExploreSection({
   charts,
   moods,
   showHero = true,
-  stickyTopOffset = 0,
+  stickyTopOffset = 70,
 }: MusicExploreSectionProps) {
   const [loadingNew, setLoadingNew] = useState(!newReleases);
   const [loadingCharts, setLoadingCharts] = useState(!charts);
   const [loadingMoods, setLoadingMoods] = useState(!moods);
   const [catLoading, setCatLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [activeCat, setActiveCat] = useState<string | number | null>(null);
+  const [activeCat, setActiveCat] = useState<string | null>(null);
   const [dataNew, setDataNew] = useState<Item[]>(newReleases ?? []);
   const [dataCharts, setDataCharts] = useState<Item[]>(charts ?? []);
   const [dataMoods, setDataMoods] = useState<Item[]>(moods ?? []);
@@ -315,7 +324,7 @@ export default function MusicExploreSection({
   const [modalItem, setModalItem] = useState<MusicDetail | null>(null);
   const [usage, setUsage] = useState<{ perRead: number; monthlyTotal: number; remaining: number }>();
 
-  // 카테고리 목록(칩용) — 기존 API 유지
+  // 카테고리 목록(칩용)
   useEffect(() => {
     (async () => {
       try {
@@ -330,9 +339,9 @@ export default function MusicExploreSection({
     })();
   }, []);
 
-  // 🔥 explore 섹션 한 번에 로드
+  // explore 섹션 로드
   useEffect(() => {
-    if (newReleases && charts && moods) return; // 프롭으로 들어오면 skip
+    if (newReleases && charts && moods) return;
     (async () => {
       try {
         if (!newReleases) setLoadingNew(true);
@@ -353,26 +362,33 @@ export default function MusicExploreSection({
     })();
   }, [newReleases, charts, moods]);
 
-  // 카테고리 클릭 → 차트만 기존 popular API로 프리셋 (백엔드 explore에 카테고리 필터 붙으면 여기 교체)
+  // 카테고리 클릭 → musics API 사용 (popular 정렬)
   const onClickCategory = async (c: Category) => {
-    const key = c.category_name ?? String(c.category_id);
-    setActiveCat(key);
+    const label = c.category_name ?? String(c.category_id);
+    setActiveCat(label);
     startChartsTransition(async () => {
       try {
-        const items = await fetchPopular({ category: key, limit: 12 });
-        setDataCharts(items.map((m: any) => ({
-          id: m.id,
-          cover: m.cover ?? m.cover_image_url ?? '/placeholder.png',
-          title: m.title,
-          subtitle: m.artist || 'Unknown',
-          playCount: Number(m.reward_amount ?? m.reward_one ?? 0),
-          monthTotal: Number(m.reward_total ?? 0),
-          remain: Number(m.reward_remaining ?? m.reward_remain ?? 0),
-          category: m.category_name ?? m.category ?? undefined,
-          tags: FALLBACK_TAGS,
-        })));
+        const { items } = await fetchMusics({
+          category: c.category_id, // 서버는 category_id 기준
+          sort: 'popular',
+          limit: 12,
+        });
+
+        setDataCharts(
+          items.map((m: any) => ({
+            id: m.id,
+            cover: m.cover ?? m.cover_image_url ?? '/placeholder.png',
+            title: m.title,
+            subtitle: m.artist || 'Unknown',
+            playCount: Number(m.reward?.reward_one ?? m.reward_amount ?? 0),
+            monthTotal: Number(m.reward?.reward_total ?? 0),
+            remain: Number(m.reward?.reward_remain ?? m.reward_remaining ?? 0),
+            category: m.category_name ?? m.category ?? undefined,
+            tags: FALLBACK_TAGS,
+          }))
+        );
       } catch (e) {
-        console.error('[MusicExploreSection] fetchPopular(category) 실패', e);
+        console.error('[MusicExploreSection] fetchMusics(category) 실패', e);
       }
     });
   };
@@ -380,37 +396,67 @@ export default function MusicExploreSection({
   const categoryChips = useMemo(
     () =>
       (categories ?? []).map((c) => {
-        const key = c.category_name ?? String(c.category_id);
-        const active = activeCat === key;
+        const label = c.category_name ?? String(c.category_id);
+        const active = activeCat === label;
         return (
-          <Chip key={key} active={active} onClick={() => onClickCategory(c)}>
-            #{key}
+          <Chip key={c.category_id} active={active} onClick={() => onClickCategory(c)}>
+            #{label}
           </Chip>
         );
       }),
-    [categories, activeCat],
+    [categories, activeCat]
   );
 
-  // modal open
-  const openModalFromItem = (it: Item) => {
-    const detail: MusicDetail = {
-      id: it.id,
-      title: it.title,
-      artist: it.subtitle,
-      cover: it.cover,
-      lyrics:
-        '가사 준비중...\n\n(임시 데이터) 곡 상세 API 연결 시 실제 가사와 추가 메타데이터를 표기합니다.',
-      company: { id: 0, name: '—' },
-      isSubscribed: false,
-    };
-    setModalItem(detail);
-    setUsage({ perRead: it.playCount, monthlyTotal: it.monthTotal, remaining: it.remain });
-    setModalOpen(true);
+  // modal open → 상세 API 조회 후 모달 오픈
+  const openModalFromItem = async (it: Item) => {
+    try {
+      const d = await fetchMusicDetail(it.id);
+      const detail: MusicDetail = {
+        id: d.id,
+        title: d.title,
+        artist: d.artist,
+        cover: d.cover_image_url ?? it.cover,
+        lyrics: d.lyrics_text ?? '가사 준비중...\n\n(상세 API 연결됨)',
+        company: { id: 0, name: '—' },
+        isSubscribed: !!d.is_using,
+      };
+      setModalItem(detail);
+      setUsage({
+        perRead: Number(d.reward?.reward_one ?? it.playCount ?? 0),
+        monthlyTotal: Number(d.reward?.reward_total ?? it.monthTotal ?? 0),
+        remaining: Number(d.reward?.reward_remain ?? it.remain ?? 0),
+      });
+      setModalOpen(true);
+    } catch (e) {
+      console.error('[openModalFromItem] fetchMusicDetail 실패', e);
+      // 상세 실패해도 최소한 기존 카드 정보로 모달 띄우기
+      const fallback: MusicDetail = {
+        id: it.id,
+        title: it.title,
+        artist: it.subtitle,
+        cover: it.cover,
+        lyrics: '가사 준비중...',
+        company: { id: 0, name: '—' },
+        isSubscribed: false,
+      };
+      setModalItem(fallback);
+      setUsage({ perRead: it.playCount, monthlyTotal: it.monthTotal, remaining: it.remain });
+      setModalOpen(true);
+    }
   };
 
-  const handleSubscribe = async (_musicId: number) => {
-    setModalItem((prev) => (prev ? { ...prev, isSubscribed: true } : prev));
+  // “사용하기” → POST /musics/:id/use
+  const handleSubscribe = async (musicId: number) => {
+    try {
+      const res = await useMusic(musicId);
+      if (res.isUsing) {
+        setModalItem((prev) => (prev ? { ...prev, isSubscribed: true } : prev));
+      }
+    } catch (e) {
+      console.error('[useMusic] 실패', e);
+    }
   };
+
   const handleAddToPlaylist = async (musicId: number, playlistId: number) => {
     console.log('addToPlaylist', { musicId, playlistId });
   };
@@ -441,7 +487,7 @@ export default function MusicExploreSection({
       {/* sticky categories */}
       <div
         className="sticky z-10 mt-10 mb-5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white/80 dark:bg-zinc-900/70 backdrop-blur p-3"
-        style={{ top: 70 }}
+        style={{ top: stickyTopOffset }}
       >
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-zinc-700 dark:text-white/85">카테고리</h3>

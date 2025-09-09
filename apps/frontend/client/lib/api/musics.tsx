@@ -1,696 +1,96 @@
-import type { Music, Page } from "@/lib/types/music";
+// lib/api/musics.ts
+// ─────────────────────────────────────────────────────────────────────────────
+// 실데이터용 클린 버전
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type Category = { category_id: number; category_name: string };
 
-const USE_LOCAL =
-  process.env.NEXT_PUBLIC_API_MODE === "local" ||
-  (!process.env.NEXT_PUBLIC_API_BASE && !process.env.NEXT_PUBLIC_API_URL);
+// 서버가 내려주는 PopularMusicDto (요약)
+export type RewardInfo = {
+  reward_one: string | null;
+  reward_total: string | null;
+  reward_remain: string | null;
+  total_count: number | null;
+  remain_count: number | null;
+};
 
+export type MusicDetailApi = {
+  id: number;
+  title: string;
+  artist: string;
+  cover_image_url: string | null;
+  format: 'FULL' | 'INSTRUMENTAL';
+  has_lyrics: boolean;
+  lyrics_text: string | null;
+  lyrics_file_path: string | null;
+  grade_required: 0|1|2;
+  can_use: boolean;
+  reward: {
+    reward_one: string | null;
+    reward_total: string | null;
+    reward_remain: string | null;
+    total_count: number | null;
+    remain_count: number | null;
+  };
+  popularity: number;
+  created_at: string;
+  category_id: number | null;
+  category_name: string | null;
+  duration_sec: number | null;
+  price_per_play: string | null;
+  is_using: boolean;
+};
+
+
+export type PopularMusicDto = {
+  id: number;
+  title: string;
+  artist: string;
+  cover_image_url?: string | null;
+  // 선택적으로 백엔드가 cover 필드를 직접 줄 수도 있음
+  cover?: string | null;
+
+  format: 'FULL' | 'INSTRUMENTAL';
+  has_lyrics: boolean;
+
+  grade_required: 0 | 1 | 2;
+  can_use: boolean;
+
+  reward: RewardInfo;
+
+  popularity: number;
+  created_at: string | Date;
+
+  category?: string | null;
+};
+
+export type Music = PopularMusicDto & {
+  // 프론트에서 편하게 쓰려고 cover 통일
+  cover: string;
+};
+
+export type Page<T> = {
+  items: T[];
+  nextCursor: string | number | null;
+  hasMore: boolean;
+};
+
+// ── BASE URL ────────────────────────────────────────────────────────────────
 const BASE =
   process.env.NEXT_PUBLIC_API_BASE ??
   (process.env.NEXT_PUBLIC_API_URL
-    ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")}/api/v1`
-    : "http://localhost:4000/api/v1");
-
-// ---- 3) 로컬 DB ----
-const db = { 
-  categories: [
-      { category_id: 1, category_name: "Pop" },
-      { category_id: 2, category_name: "발라드" },
-      { category_id: 3, category_name: "댄스" },
-      { category_id: 4, category_name: "힙합" },
-      { category_id: 5, category_name: "R&B" },
-      { category_id: 6, category_name: "락" },
-      { category_id: 7, category_name: "클래식" },
-      { category_id: 8, category_name: "재즈" },
-      { category_id: 9, category_name: "트로트" },
-      { category_id: 10, category_name: "OST" },
-      { category_id: 11, category_name: "인디" },
-      { category_id: 12, category_name: "포크" },
-      { category_id: 13, category_name: "뉴에이지" },
-      { category_id: 14, category_name: "EDM" },
-      { category_id: 15, category_name: "랩" },
-    ],
-    musics: [
-      {
-        "id": 1,
-        "title": "New album, \"Raging Clouds\", is out",
-        "artist": "Silver Rain",
-        "lyrics": "",
-        "duration_sec": 197,
-        "cover_image_url": "https://images.unsplash.com/photo-1511379938547-c1f69419868d?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8900,
-        "created_at": "2023-03-22T00:00:00Z",
-        "updated_at": "2023-03-22T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8900,
-        "category_id": 1
-      },
-      {
-        "id": 2,
-        "title": "2018 Europe Tour dates announced",
-        "artist": "Crimson Fire",
-        "lyrics": "",
-        "duration_sec": 181,
-        "cover_image_url": "https://images.unsplash.com/photo-1517232115160-ff93364542dd?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 3600,
-        "created_at": "2023-03-22T00:00:00Z",
-        "updated_at": "2023-03-22T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 3600,
-        "category_id": 1
-      },
-      {
-        "id": 3,
-        "title": "여름밤, 바다를 걷다",
-        "artist": "바다새",
-        "lyrics": "",
-        "duration_sec": 280,
-        "cover_image_url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 7200,
-        "created_at": "2025-08-10T00:00:00Z",
-        "updated_at": "2025-08-10T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 7200,
-        "category_id": 7
-      },
-      {
-        "id": 4,
-        "title": "첫눈이 내린 날",
-        "artist": "하얀별",
-        "lyrics": "",
-        "duration_sec": 158,
-        "cover_image_url": "https://images.unsplash.com/photo-1608889175123-74b3dd6b14ab?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5100,
-        "created_at": "2025-08-09T00:00:00Z",
-        "updated_at": "2025-08-09T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5100,
-        "category_id": 12
-      },
-      {
-        "id": 5,
-        "title": "서울의 밤거리",
-        "artist": "네온라이트",
-        "lyrics": "",
-        "duration_sec": 124,
-        "cover_image_url": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 9900,
-        "created_at": "2025-08-08T00:00:00Z",
-        "updated_at": "2025-08-08T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 9900,
-        "category_id": 14
-      },
-      {
-        "id": 6,
-        "title": "봄바람 속으로",
-        "artist": "그린필드",
-        "lyrics": "",
-        "duration_sec": 190,
-        "cover_image_url": "https://images.unsplash.com/photo-1521747116042-5a810fda9664?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 6400,
-        "created_at": "2025-08-07T00:00:00Z",
-        "updated_at": "2025-08-07T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 6400,
-        "category_id": 11
-      },
-      {
-        "id": 7,
-        "title": "하늘을 나는 꿈",
-        "artist": "스카이웨이",
-        "lyrics": "",
-        "duration_sec": 171,
-        "cover_image_url": "https://images.unsplash.com/photo-1501785888041-af3ef285b470?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8200,
-        "created_at": "2025-08-06T00:00:00Z",
-        "updated_at": "2025-08-06T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8200,
-        "category_id": 3
-      },
-      {
-        "id": 8,
-        "title": "달빛에 취하다",
-        "artist": "루나",
-        "lyrics": "",
-        "duration_sec": 318,
-        "cover_image_url": "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5700,
-        "created_at": "2025-08-05T00:00:00Z",
-        "updated_at": "2025-08-05T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5700,
-        "category_id": 5
-      },
-      {
-        "id": 9,
-        "title": "별빛 속으로",
-        "artist": "스타더스트",
-        "lyrics": "",
-        "duration_sec": 150,
-        "cover_image_url": "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 9300,
-        "created_at": "2025-08-04T00:00:00Z",
-        "updated_at": "2025-08-04T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 9300,
-        "category_id": 6
-      },
-      {
-        "id": 10,
-        "title": "숲속의 이야기",
-        "artist": "포레스트",
-        "lyrics": "",
-        "duration_sec": 172,
-        "cover_image_url": "https://images.unsplash.com/photo-1501785888041-af3ef285b470?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 4100,
-        "created_at": "2025-08-03T00:00:00Z",
-        "updated_at": "2025-08-03T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 4100,
-        "category_id": 13
-      },
-      {
-        "id": 11,
-        "title": "도시의 새벽",
-        "artist": "아침안개",
-        "lyrics": "",
-        "duration_sec": 275,
-        "cover_image_url": "https://images.unsplash.com/photo-1491553895911-0055eca6402d?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 6600,
-        "created_at": "2025-08-02T00:00:00Z",
-        "updated_at": "2025-08-02T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 6600,
-        "category_id": 9
-      },
-      {
-        "id": 12,
-        "title": "파도 위를 걷다",
-        "artist": "씨글래스",
-        "lyrics": "",
-        "duration_sec": 147,
-        "cover_image_url": "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 7400,
-        "created_at": "2025-08-01T00:00:00Z",
-        "updated_at": "2025-08-01T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 7400,
-        "category_id": 4
-      },
-      {
-        "id": 13,
-        "title": "네온의 꿈",
-        "artist": "네온보이",
-        "lyrics": "",
-        "duration_sec": 195,
-        "cover_image_url": "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 9800,
-        "created_at": "2025-07-31T00:00:00Z",
-        "updated_at": "2025-07-31T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 9800,
-        "category_id": 14
-      },
-      {
-        "id": 14,
-        "title": "여름 소나기",
-        "artist": "레인드롭",
-        "lyrics": "",
-        "duration_sec": 139,
-        "cover_image_url": "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 3900,
-        "created_at": "2025-07-30T00:00:00Z",
-        "updated_at": "2025-07-30T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 3900,
-        "category_id": 1
-      },
-      {
-        "id": 15,
-        "title": "밤하늘 라디오",
-        "artist": "라디오스타",
-        "lyrics": "",
-        "duration_sec": 343,
-        "cover_image_url": "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 10000,
-        "created_at": "2025-07-29T00:00:00Z",
-        "updated_at": "2025-07-29T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 10000,
-        "category_id": 6
-      },
-      {
-        "id": 16,
-        "title": "골목길 블루스",
-        "artist": "스트리트캣",
-        "lyrics": "",
-        "duration_sec": 250,
-        "cover_image_url": "https://images.unsplash.com/photo-1469474968028-56623f02e42e?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5200,
-        "created_at": "2025-08-19T00:00:00Z",
-        "updated_at": "2025-08-19T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5200,
-        "category_id": 8
-      },
-      {
-        "id": 17,
-        "title": "안개꽃",
-        "artist": "모닝듀",
-        "lyrics": "",
-        "duration_sec": 141,
-        "cover_image_url": "https://images.unsplash.com/photo-1465101046530-73398c7f28ca?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 6900,
-        "created_at": "2025-07-27T00:00:00Z",
-        "updated_at": "2025-07-27T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 6900,
-        "category_id": 2
-      },
-      {
-        "id": 18,
-        "title": "붉은 석양 아래",
-        "artist": "선셋밴드",
-        "lyrics": "",
-        "duration_sec": 128,
-        "cover_image_url": "https://images.unsplash.com/photo-1473187983305-f615310e7daa?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8700,
-        "created_at": "2025-07-26T00:00:00Z",
-        "updated_at": "2025-07-26T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8700,
-        "category_id": 10
-      },
-      {
-        "id": 19,
-        "title": "별의 노래",
-        "artist": "스타라이트",
-        "lyrics": "",
-        "duration_sec": 179,
-        "cover_image_url": "https://images.unsplash.com/photo-1444703686981-a3abbc4d4fe3?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 7300,
-        "created_at": "2025-07-25T00:00:00Z",
-        "updated_at": "2025-07-25T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 7300,
-        "category_id": 11
-      },
-      {
-        "id": 20,
-        "title": "비오는 오후",
-        "artist": "크림슨레인",
-        "lyrics": "",
-        "duration_sec": 318,
-        "cover_image_url": "https://images.unsplash.com/photo-1495567720989-cebdbdd97913?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 4500,
-        "created_at": "2025-07-24T00:00:00Z",
-        "updated_at": "2025-07-24T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 4500,
-        "category_id": 15
-      },
-      {
-        "id": 21,
-        "title": "Dreamscape Nights",
-        "artist": "Luna Echo",
-        "lyrics": "",
-        "duration_sec": 176,
-        "cover_image_url": "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 7500,
-        "created_at": "2023-04-10T00:00:00Z",
-        "updated_at": "2023-04-10T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 7500,
-        "category_id": 2
-      },
-      {
-        "id": 22,
-        "title": "Golden Horizon",
-        "artist": "Aurora Sky",
-        "lyrics": "",
-        "duration_sec": 356,
-        "cover_image_url": "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 6700,
-        "created_at": "2023-05-02T00:00:00Z",
-        "updated_at": "2023-05-02T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 6700,
-        "category_id": 3
-      },
-      {
-        "id": 23,
-        "title": "Ocean's Whisper",
-        "artist": "Coral Reef",
-        "lyrics": "",
-        "duration_sec": 245,
-        "cover_image_url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5600,
-        "created_at": "2023-06-14T00:00:00Z",
-        "updated_at": "2023-06-14T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5600,
-        "category_id": 1
-      },
-      {
-        "id": 24,
-        "title": "City Lights Serenade",
-        "artist": "Neon Pulse",
-        "lyrics": "",
-        "duration_sec": 149,
-        "cover_image_url": "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8900,
-        "created_at": "2023-07-08T00:00:00Z",
-        "updated_at": "2023-07-08T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8900,
-        "category_id": 4
-      },
-      {
-        "id": 25,
-        "title": "Winter Bloom",
-        "artist": "Frost Lily",
-        "lyrics": "",
-        "duration_sec": 248,
-        "cover_image_url": "https://images.unsplash.com/photo-1519681393784-d120267933ba?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 9200,
-        "created_at": "2023-08-01T00:00:00Z",
-        "updated_at": "2023-08-01T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 9200,
-        "category_id": 5
-      },
-      {
-        "id": 26,
-        "title": "Sahara Winds",
-        "artist": "Desert Flame",
-        "lyrics": "",
-        "duration_sec": 269,
-        "cover_image_url": "https://images.unsplash.com/photo-1469474968028-56623f02e42e?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 6400,
-        "created_at": "2023-09-12T00:00:00Z",
-        "updated_at": "2023-09-12T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 6400,
-        "category_id": 2
-      },
-      {
-        "id": 27,
-        "title": "Twilight Reflections",
-        "artist": "Evening Star",
-        "lyrics": "",
-        "duration_sec": 170,
-        "cover_image_url": "https://images.unsplash.com/photo-1516912481808-3406841bd33c?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8700,
-        "created_at": "2023-10-05T00:00:00Z",
-        "updated_at": "2023-10-05T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8700,
-        "category_id": 3
-      },
-      {
-        "id": 28,
-        "title": "Forest Echoes",
-        "artist": "Moss Veil",
-        "lyrics": "",
-        "duration_sec": 296,
-        "cover_image_url": "https://images.unsplash.com/photo-1506744038136-46273834b3fb?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5100,
-        "created_at": "2023-11-15T00:00:00Z",
-        "updated_at": "2023-11-15T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5100,
-        "category_id": 1
-      },
-      {
-        "id": 29,
-        "title": "Crimson Moon",
-        "artist": "Scarlet Dawn",
-        "lyrics": "",
-        "duration_sec": 239,
-        "cover_image_url": "https://images.unsplash.com/photo-1503264116251-35a269479413?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 7800,
-        "created_at": "2023-12-03T00:00:00Z",
-        "updated_at": "2023-12-03T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 7800,
-        "category_id": 4
-      },
-      {
-        "id": 30,
-        "title": "Aurora Dreams",
-        "artist": "Northern Glow",
-        "lyrics": "",
-        "duration_sec": 135,
-        "cover_image_url": "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 9300,
-        "created_at": "2024-01-09T00:00:00Z",
-        "updated_at": "2024-01-09T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 9300,
-        "category_id": 5
-      },
-      {
-        "id": 31,
-        "title": "Velvet Skies",
-        "artist": "Night Bloom",
-        "lyrics": "",
-        "duration_sec": 226,
-        "cover_image_url": "https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8500,
-        "created_at": "2024-02-11T00:00:00Z",
-        "updated_at": "2024-02-11T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8500,
-        "category_id": 2
-      },
-      {
-        "id": 32,
-        "title": "Shoreline Waltz",
-        "artist": "Sea Breeze",
-        "lyrics": "",
-        "duration_sec": 294,
-        "cover_image_url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5900,
-        "created_at": "2024-03-02T00:00:00Z",
-        "updated_at": "2024-03-02T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5900,
-        "category_id": 3
-      },
-      {
-        "id": 33,
-        "title": "Sunflower Swing",
-        "artist": "Golden Petals",
-        "lyrics": "",
-        "duration_sec": 329,
-        "cover_image_url": "https://images.unsplash.com/photo-1501004318641-b39e6451bec6?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 7100,
-        "created_at": "2024-04-20T00:00:00Z",
-        "updated_at": "2024-04-20T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 7100,
-        "category_id": 1
-      },
-      {
-        "id": 34,
-        "title": "Lunar Voyage",
-        "artist": "Orbit Tide",
-        "lyrics": "",
-        "duration_sec": 159,
-        "cover_image_url": "https://images.unsplash.com/photo-1519682337058-a94d519337bc?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8800,
-        "created_at": "2024-05-07T00:00:00Z",
-        "updated_at": "2024-05-07T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8800,
-        "category_id": 4
-      },
-      {
-        "id": 35,
-        "title": "Candlelight Ballad",
-        "artist": "Amber Glow",
-        "lyrics": "",
-        "duration_sec": 167,
-        "cover_image_url": "https://images.unsplash.com/photo-1487215078519-e21cc028cb29?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5200,
-        "created_at": "2024-06-15T00:00:00Z",
-        "updated_at": "2024-06-15T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5200,
-        "category_id": 5
-      },
-      {
-        "id": 36,
-        "title": "Misty Path",
-        "artist": "Foggy Lane",
-        "lyrics": "",
-        "duration_sec": 280,
-        "cover_image_url": "https://images.unsplash.com/photo-1506744038136-46273834b3fb?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 7600,
-        "created_at": "2024-07-01T00:00:00Z",
-        "updated_at": "2024-07-01T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 7600,
-        "category_id": 2
-      },
-      {
-        "id": 37,
-        "title": "Scarlet Horizon",
-        "artist": "Crimson Glow",
-        "lyrics": "",
-        "duration_sec": 333,
-        "cover_image_url": "https://images.unsplash.com/photo-1503264116251-35a269479413?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 9400,
-        "created_at": "2024-08-22T00:00:00Z",
-        "updated_at": "2024-08-22T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 9400,
-        "category_id": 3
-      },
-      {
-        "id": 38,
-        "title": "Cascade Falls",
-        "artist": "River Flow",
-        "lyrics": "",
-        "duration_sec": 177,
-        "cover_image_url": "https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 6000,
-        "created_at": "2024-09-10T00:00:00Z",
-        "updated_at": "2024-09-10T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 6000,
-        "category_id": 1
-      },
-      {
-        "id": 39,
-        "title": "Starbound",
-        "artist": "Galaxy Drift",
-        "lyrics": "",
-        "duration_sec": 274,
-        "cover_image_url": "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 8700,
-        "created_at": "2024-10-08T00:00:00Z",
-        "updated_at": "2024-10-08T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 8700,
-        "category_id": 4
-      },
-      {
-        "id": 40,
-        "title": "Wildflower",
-        "artist": "Meadow Grace",
-        "lyrics": "",
-        "duration_sec": 258,
-        "cover_image_url": "https://images.unsplash.com/photo-1501004318641-b39e6451bec6?q=80&w=1200&auto=format&fit=crop",
-        "stream_endpoint": "",
-        "price_per_play": 5500,
-        "created_at": "2024-11-19T00:00:00Z",
-        "updated_at": "2024-11-19T00:00:00Z",
-        "reward_amount": 0,
-        "reward_count": 0,
-        "price": 5500,
-        "category_id": 5
-      }
-    ]
-}
-
-// ---- 4) 공통 헬퍼 ----
+    ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '')}`
+    : 'http://localhost:4000');
+// ── 공통 유틸 ───────────────────────────────────────────────────────────────
 const qs = (o: Record<string, any>) => {
   const p = new URLSearchParams();
-  Object.entries(o).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") p.set(k, String(v));
-  });
+  for (const [k, v] of Object.entries(o)) {
+    if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
+  }
   const s = p.toString();
-  return s ? `?${s}` : "";
+  return s ? `?${s}` : '';
 };
 
-const normalize = (m: any): Music => ({
-  ...m,
-  cover: (m as any).cover ?? (m as any).cover_image_url ?? "",
-});
-
-// 원격 응답 안전 파서 (백엔드 { success, data, message } 형태/직접 items 둘 다 허용)
 async function safeJson(r: Response) {
   const text = await r.text();
   try {
@@ -704,7 +104,8 @@ function pickArray<T = any>(obj: any, key: string): T[] | undefined {
   if (!obj) return undefined;
   if (Array.isArray(obj[key])) return obj[key];
   if (obj.data && Array.isArray(obj.data[key])) return obj.data[key];
-  if (Array.isArray(obj.data)) return obj.data; // data가 배열 자체인 경우
+  if (Array.isArray(obj.data)) return obj.data;
+  if (Array.isArray(obj)) return obj;
   return undefined;
 }
 
@@ -716,173 +117,136 @@ function pickValue<T = any>(obj: any, ...keys: string[]): T | undefined {
   return undefined;
 }
 
-// ---- 5) 로컬 구현 ----
-function localFilterByCategory(list: any[], category?: string | number) {
-  if (category === undefined || category === null || category === "") return list;
-  const n = Number(category);
-  if (Number.isFinite(n)) return list.filter((m) => m.category_id === n);
-  const cat = String(category).toLowerCase();
-  const nameMap = Object.fromEntries(
-    db.categories.map((c) => [c.category_id, c.category_name.toLowerCase()])
-  );
-  return list.filter((m) => nameMap[m.category_id]?.includes(cat));
+// 백엔드가 cover 또는 cover_image_url만 줄 수 있으니 cover 통일
+function normalize(m: any): Music {
+  const cover = (m.cover ?? m.cover_image_url ?? '') as string;
+  return { ...m, cover };
 }
 
-function localSort(list: any[], sort?: "new" | "popular") {
-  if (sort === "popular") {
-    // 인기순: 임시로 price_per_play 내림차순
-    return [...list].sort((a, b) => (b.price_per_play ?? 0) - (a.price_per_play ?? 0));
-  }
-  // 최신순: created_at(없으면 id) 내림차순
-  return [...list].sort((a, b) => {
-    const ad = a.created_at ? Date.parse(a.created_at) : a.id ?? 0;
-    const bd = b.created_at ? Date.parse(b.created_at) : b.id ?? 0;
-    return bd - ad;
-  });
+// 필요 시 Authorization 헤더도 같이 실을 수 있게 훅
+function authHeaders(): HeadersInit {
+  if (typeof window === 'undefined') return {};
+  const t = localStorage.getItem('accessToken');
+  return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-function localPaginateByCursor(list: any[], cursor?: number | "first", limit = 20) {
-  const sorted = localSort(list, "new"); // 커서는 최신순 기준으로
-  let startIdx = 0;
-  if (cursor && cursor !== "first") {
-    const idx = sorted.findIndex((m) => m.id === Number(cursor));
-    startIdx = idx >= 0 ? idx + 1 : 0; // cursor 다음부터
-  }
-  const items = sorted.slice(startIdx, startIdx + limit);
-  const nextCursor = items.length ? items[items.length - 1].id : null;
-  return { items, nextCursor };
+// 공통 fetch 옵션
+function reqInit(extra?: RequestInit): RequestInit {
+  return {
+    cache: 'no-store',
+    credentials: 'include',
+    headers: { ...(extra?.headers || {}), ...authHeaders() },
+    ...extra,
+  };
 }
 
+// ── API 함수들 ──────────────────────────────────────────────────────────────
 
+/** 카테고리 목록 */
 export async function fetchCategories(): Promise<Category[]> {
-  if (USE_LOCAL) return db.categories;
+  const r = await fetch(`${BASE}/musics/categories`, reqInit());
+  if (!r.ok) throw new Error(`GET ${BASE}/musics/categories ${r.status}`);
+  const j = await safeJson(r);
 
-  try {
-    // 백엔드 경로: /musics/categories
-    const r = await fetch(`${BASE}/musics/categories`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`GET ${BASE}/musics/categories ${r.status}`);
-    const j = await safeJson(r);
+  const items = pickArray<Category>(j, 'items');
+  if (Array.isArray(items)) return items;
 
-    // { items: [...] } | { data: [...] } | data가 배열인 경우 모두 허용
-    const arr =
-      (Array.isArray(j.items) ? j.items :
-      (Array.isArray(j.data?.items) ? j.data.items :
-      (Array.isArray(j.data) ? j.data : undefined))) as Category[] | undefined;
-
-    if (Array.isArray(arr)) return arr;
-    throw new Error(`Unexpected categories response: ${JSON.stringify(j).slice(0, 200)}`);
-  } catch (e) {
-    console.warn("[fetchCategories] remote failed → fallback to local:", e);
-    return db.categories;
-  }
+  throw new Error(`Unexpected categories response: ${JSON.stringify(j).slice(0, 200)}`);
 }
 
-export async function fetchPopular(params: { category?: string | number; limit?: number } = {}) {
-  if (USE_LOCAL) {
-    const filtered = localFilterByCategory(db.musics, params.category);
-    const sorted = localSort(filtered, "popular");
-    const limited = sorted.slice(0, params.limit ?? 10);
-    return limited.map(normalize);
-  }
-
-  try {
-    const r = await fetch(`${BASE}/musics/popular${qs(params)}`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`GET ${BASE}/musics/popular ${r.status}`);
-    const j = await safeJson(r);
-
-    const items =
-      (Array.isArray(j.items) ? j.items :
-      (Array.isArray(j.data?.items) ? j.data.items :
-      (Array.isArray(j.data) ? j.data : Array.isArray(j) ? j : undefined))) as Music[] | undefined;
-
-    if (!items) throw new Error(`Unexpected popular response: ${JSON.stringify(j).slice(0, 200)}`);
-    return items.map(normalize);
-  } catch (e) {
-    console.warn("[fetchPopular] remote failed → fallback to local:", e);
-    const filtered = localFilterByCategory(db.musics, params.category);
-    const sorted = localSort(filtered, "popular");
-    const limited = sorted.slice(0, params.limit ?? 10);
-    return limited.map(normalize);
-  }
-}
-
+/**
+ * 일반 목록/검색 API
+ * - category: 숫자 ID 또는 문자열 ID를 서버에서 category_id로 받는다고 가정
+ * - sort: 'new' | 'popular' → 서버 sort 키로 매핑
+ * - cursor: 문자열/숫자 허용
+ */
 export async function fetchMusics(params: {
+  q?: string;
   category?: string | number;
-  cursor?: number | "first";
+  mood?: string;
+  sort?: 'new' | 'popular';
   limit?: number;
-  sort?: "new" | "popular";
+  cursor?: string | number | null;
 }): Promise<Page<Music>> {
-  if (USE_LOCAL) {
-    const filtered = localFilterByCategory(db.musics, params.category);
-    const sorted = localSort(filtered, params.sort);
-    const { items, nextCursor } = localPaginateByCursor(sorted, params.cursor, params.limit ?? 20);
-    return { items: items.map(normalize), nextCursor, hasMore: Boolean(nextCursor) };
+  // 서버 파라미터 매핑
+  const serverParams: Record<string, any> = {};
+  if (params.q) serverParams.q = params.q;
+  if (params.category !== undefined) serverParams.category_id = params.category;
+  if (params.mood) serverParams.mood = params.mood;
+  if (params.limit !== undefined) serverParams.limit = params.limit;
+  if (params.cursor !== undefined && params.cursor !== null) serverParams.cursor = params.cursor;
+  if (params.sort) {
+    serverParams.sort = params.sort === 'popular' ? 'most_played' : 'newest';
   }
 
-  try {
-    // 서버 파라미터 매핑
-    const serverParams: Record<string, any> = {};
-    if (params.category !== undefined) serverParams.category_id = params.category;
-    if (params.limit !== undefined) serverParams.limit = params.limit;
-    if (params.cursor && params.cursor !== "first") serverParams.cursor = params.cursor;
-    if (params.sort) serverParams.sort = params.sort === "popular" ? "most_played" : "newest";
+  const r = await fetch(`${BASE}/musics${qs(serverParams)}`, reqInit());
+  if (!r.ok) throw new Error(`GET ${BASE}/musics ${r.status}`);
+  const j = await safeJson(r);
 
-    const r = await fetch(`${BASE}/musics${qs(serverParams)}`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`GET ${BASE}/musics ${r.status}`);
-    const j = await safeJson(r);
+  const itemsRaw = pickArray<PopularMusicDto>(j, 'items');
+  const nextCursorRaw = pickValue<string | number | null>(j, 'nextCursor', 'next_cursor');
+  const hasMoreRaw = pickValue<boolean>(j, 'hasMore', 'has_more');
 
-    const items =
-      (Array.isArray(j.items) ? j.items :
-      (Array.isArray(j.data?.items) ? j.data.items :
-      (Array.isArray(j.data) ? j.data : undefined))) as Music[] | undefined;
-
-    const nextCursorRaw =
-      (j.next_cursor ?? j.nextCursor ?? j.data?.next_cursor ?? j.data?.nextCursor) ?? null;
-
-    const hasMoreFlag =
-      (j.has_more ?? j.hasMore ?? j.data?.has_more ?? j.data?.hasMore) ?? false;
-
-    if (!items) {
-      throw new Error(`Unexpected musics response: ${JSON.stringify(j).slice(0, 200)}`);
-    }
-
-    // ✅ Page<Music>의 nextCursor: number | null 로 강제 변환
-    let nextCursorNum: number | null = null;
-    if (nextCursorRaw !== null && nextCursorRaw !== undefined) {
-      const n = typeof nextCursorRaw === "number" ? nextCursorRaw : Number(nextCursorRaw);
-      nextCursorNum = Number.isFinite(n) ? n : null;
-    }
-
-    return {
-      items: items.map(normalize),
-      nextCursor: nextCursorNum,
-      hasMore: Boolean(hasMoreFlag || nextCursorNum !== null),
-    };
-  } catch (e) {
-    console.warn("[fetchMusics] remote failed → fallback to local:", e);
-    const filtered = localFilterByCategory(db.musics, params.category);
-    const sorted = localSort(filtered, params.sort);
-    const { items, nextCursor } = localPaginateByCursor(sorted, params.cursor, params.limit ?? 20);
-    return { items: items.map(normalize), nextCursor, hasMore: Boolean(nextCursor) };
+  if (!Array.isArray(itemsRaw)) {
+    throw new Error(`Unexpected musics response: ${JSON.stringify(j).slice(0, 200)}`);
   }
+
+  const nextCursor = nextCursorRaw ?? null;
+  const hasMore = Boolean(hasMoreRaw ?? (nextCursor !== null));
+
+  return {
+    items: itemsRaw.map(normalize),
+    nextCursor,
+    hasMore,
+  };
 }
 
+/** 차트(인기) 전용 단축 API — 카테고리 칩에서 사용 */
+export async function fetchPopular(params: {
+  category?: string | number;
+  limit?: number;
+  days?: number; // 서버가 허용하면 최근기간 조절
+} = {}): Promise<Music[]> {
+  const serverParams: Record<string, any> = {};
+  if (params.category !== undefined) serverParams.category = params.category;
+  if (params.limit !== undefined) serverParams.limit = params.limit;
+  if (params.days !== undefined) serverParams.days = params.days;
+
+  const r = await fetch(`${BASE}/musics/popular${qs(serverParams)}`, reqInit());
+  if (!r.ok) throw new Error(`GET ${BASE}/musics/popular ${r.status}`);
+  const j = await safeJson(r);
+
+  const items = pickArray<PopularMusicDto>(j, 'items');
+  if (!items) throw new Error(`Unexpected popular response: ${JSON.stringify(j).slice(0, 200)}`);
+
+  return items.map(normalize);
+}
+
+/** 상세 */
 export async function fetchMusic(id: number | string): Promise<Music> {
-  if (USE_LOCAL) {
-    const one = db.musics.find((m) => String(m.id) === String(id));
-    if (!one) throw new Error(`music not found: ${id}`);
-    return normalize(one);
-  }
-  try {
-    const r = await fetch(`${BASE}/musics/${id}`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`GET ${BASE}/musics/${id} ${r.status}`);
-    const j = await safeJson(r);
-    const obj = j?.data ?? j;
-    return normalize(obj);
-  } catch (e) {
-    console.warn("[fetchMusic] remote failed → fallback to local:", e);
-    const one = db.musics.find((m) => String(m.id) === String(id));
-    if (!one) throw new Error(`music not found: ${id}`);
-    return normalize(one);
-  }
+  const r = await fetch(`${BASE}/musics/${id}`, reqInit());
+  if (!r.ok) throw new Error(`GET ${BASE}/musics/${id} ${r.status}`);
+  const j = await safeJson(r);
+  const obj = pickValue<any>(j, 'data') ?? j;
+  return normalize(obj);
+}
+
+  // 음원 상세 
+export async function fetchMusicDetail(id: number | string): Promise<MusicDetailApi> {
+  const r = await fetch(`${BASE}/musics/${id}`, { credentials: 'include', cache: 'no-store' });
+  const j = await safeJson(r);
+  if (!r.ok) throw new Error(j?.message || `GET /musics/${id} ${r.status}`);
+  return j;
+}
+
+// 음원 사용하기 
+export async function useMusic(musicId: number): Promise<{ isUsing: boolean; usingId?: number }> {
+  const r = await fetch(`${BASE}/musics/${musicId}/use`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const j = await safeJson(r);
+  if (!r.ok) throw new Error(j?.message || `POST /musics/${musicId}/use ${r.status}`);
+  return { isUsing: !!j.is_using, usingId: j.using_id };
 }

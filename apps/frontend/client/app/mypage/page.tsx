@@ -20,6 +20,7 @@ import { useMePlays } from "@/hooks/useMePlays";
 
 import { usePlaylistsList, usePlaylistTracks, usePlaylistActions } from "@/hooks/usePlaylists";
 import type { PlaylistCard } from "@/lib/api/playlist";
+import { resolveImageUrl } from "../utils/resolveImageUrl";
 /* ---------------- UI Utils ---------------- */
 function maskKey(last4: string | null | undefined) {
   if (!last4) return "****-****-****-****";
@@ -65,13 +66,7 @@ function shortenAddr(addr?: string | null, head = 6, tail = 4) {
   return `${addr.slice(0, head)}...${addr.slice(-tail)}`;
 }
 
-/** 상대 이미지 경로를 절대 URL로 변환 + 플레이스홀더 제공 (camelCase 기준) */
-function resolveImageUrl(absOrRel?: string | null) {
-  if (!absOrRel) return "https://picsum.photos/seed/profile_fixed/400/400";
-  if (/^https?:\/\//i.test(absOrRel)) return absOrRel;
-  const base = (process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000").replace(/\/+$/, "");
-  return `${base}${absOrRel.startsWith("/") ? "" : "/"}${absOrRel}`;
-}
+
 
 /* ---------------- Types ---------------- */
 type TabKey = "using" | "playlist";
@@ -267,13 +262,10 @@ export default function MyPage() {
       {/* 상단 프로필 */}
       <section className="rounded-2xl border border-zinc-200 bg-white/70 p-6 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-900/60">
         <div className="flex min-h-[112px] items-start gap-5">
-          <img
-            src={resolveImageUrl(meProfile.profileImageUrl)}
+            <img
+            src={resolveImageUrl(meProfile.profileImageUrl, "profile")}
             alt="프로필 이미지"
             className="h-24 w-24 rounded-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = "https://picsum.photos/seed/profile_fixed/400/400";
-            }}
           />
           <div className="flex-1">
             <h1 className="flex flex-wrap items-center gap-2 text-[22px] font-bold leading-none text-zinc-900 dark:text-white">
@@ -466,10 +458,11 @@ export default function MyPage() {
                     className="h-full w-full"
                     aria-label={`${p.name} 상세 보기`}
                   >
-                    <img
-                      src={p.cover || "https://picsum.photos/seed/cover-fallback/800/600"}
+                   <img
+                      src={resolveImageUrl(p.cover, "music")}
                       alt={p.name}
                       className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                      loading="lazy"
                     />
                   </button>
                 </div>

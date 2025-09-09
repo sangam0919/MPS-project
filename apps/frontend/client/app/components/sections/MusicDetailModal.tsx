@@ -1,8 +1,7 @@
-// app/components/MusicDetailModal.tsx
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-
+import { resolveImageUrl } from '@/app/utils/resolveImageUrl';
 type Company = { id: number; name: string; tier?: "Free" | "Standard" | "Business" };
 type Playlist = { id: number; name: string };
 
@@ -75,7 +74,7 @@ export default function MusicDetailModal({
   const [newName, setNewName] = useState("");
   const firstFocusRef = useRef<HTMLButtonElement>(null);
 
-  // ▶ 임시 가사 데이터: 실제 API 가사가 없으면 이걸로 표시
+ 
   const mockLyrics =
 `[Verse 1]
 창문을 스치는 바람에 너의 온기가 남아
@@ -201,11 +200,11 @@ export default function MusicDetailModal({
         <header className="flex items-start gap-4 border-b border-zinc-200 px-5 py-4 dark:border-white/10">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={item.cover ?? "/placeholder-cover.png"}
-            alt={`${item.title} cover`}
-            className="h-16 w-16 rounded-md object-cover ring-1 ring-zinc-200 dark:ring-white/10"
-            draggable={false}
-          />
+              src={resolveImageUrl(item.cover, 'music')}
+              alt={`${item.title} cover`}
+              className="h-16 w-16 rounded-md object-cover ring-1 ring-zinc-200 dark:ring-white/10"
+              draggable={false}
+            />
           <div className="min-w-0 flex-1">
             <h2 id="music-modal-title" className="truncate text-lg font-semibold">
               {item.title}

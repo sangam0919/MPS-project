@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { resolveImageUrl } from "@/app/utils/resolveImageUrl"
 
 export type UsingTrackApi = {
   id: number | string;
@@ -109,11 +110,11 @@ export default function UsingRow({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-4 px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-white/5"
       >
-        <img
-          src={t.cover ?? `https://picsum.photos/seed/track-${t.id}/200/200`}
-          alt={t.title}
-          className="h-12 w-12 flex-shrink-0 rounded object-cover"
-        />
+            <img
+              src={resolveImageUrl(t.cover, "music")}
+              alt={t.title}
+              className="h-12 w-12 flex-shrink-0 rounded object-cover"
+            />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-zinc-900 dark:text-white">{t.title}</div>
           <div className="mt-0.5 line-clamp-1 text-[12px] text-zinc-500 dark:text-zinc-400">

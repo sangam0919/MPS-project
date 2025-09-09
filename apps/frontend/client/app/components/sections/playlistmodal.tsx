@@ -5,6 +5,7 @@ import { RxCross2 } from "react-icons/rx";
 import { IoPlay, IoPlaySkipBack, IoPlaySkipForward } from "react-icons/io5";
 import { useAudioPlayer } from "../../providers/AudioPlayerProvider";
 import SuccessModal from "./SuccessModal";
+import { resolveImageUrl } from "@/app/utils/resolveImageUrl";
 
 export type Track = {
   id: number;
@@ -270,8 +271,8 @@ export default function PlaylistModal({
               {/* 커버 */}
               <div className="h-28 w-28 shrink-0 overflow-hidden rounded-xl bg-zinc-200 dark:bg-zinc-800">
                 {track?.coverUrl && (
-                  <img
-                    src={track.coverUrl}
+                <img
+                    src={resolveImageUrl(track.coverUrl, "music")}
                     alt={track.title}
                     className="h-full w-full object-cover"
                     draggable={false}
@@ -350,11 +351,11 @@ export default function PlaylistModal({
                     >
                       {t.coverUrl && (
                         <img
-                          src={t.coverUrl}
-                          alt={t.title}
-                          className="h-full w-full object-cover"
-                          draggable={false}
-                        />
+                        src={resolveImageUrl(t.coverUrl, "music")}
+                        alt={t.title}
+                        className="h-full w-full object-cover"
+                        draggable={false}
+                      />
                       )}
                     </button>
                     <button
