@@ -625,18 +625,19 @@ export default function Header() {
                           alert("이미 Business 구독 중입니다.");
                           return;
                         }
-
                         try {
                           setSubscribing(true);
                           const tier = pendingPlan.name.toLowerCase() as "standard" | "business";
                           await subscribeMe({ tier, use_rewards: clampedUse });
-
+                        
                           // 등급 + 보유 리워드 동시 최신화
                           await Promise.all([fetchMe(), refreshOverview()]);
-
+                        
                           // 다른 페이지(MyPage 등)도 즉시 반영되도록 브로드캐스트
                           window.dispatchEvent(new CustomEvent("mps:me:overview:changed"));
-
+                        
+                          window.location.reload();
+                        
                           setConfirmOpen(false);
                           setShowPricing(false);
                         } catch (e: any) {
@@ -644,12 +645,13 @@ export default function Header() {
                         } finally {
                           setSubscribing(false);
                         }
+                        
                       }}
                       disabled={subscribing}
                       className="h-9 rounded-lg bg-zinc-900 px-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60
                                  dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100"
                     >
-                      {subscribing ? "처리 중…" : (currentPlan === "standard" && pendingPlan.name === "Business" ? "업그레이드 결제" : "리워드로 결제")}
+                      {subscribing ? "처리 중…" : (currentPlan === "standard" && pendingPlan.name === "Business" ? "업그레이드 결제" : " 결제")}
                     </button>
                   </div>
                 </div>

@@ -12,7 +12,7 @@ import SuccessModal from "../components/sections/SuccessModal";
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [showSuccess, setShowSuccess] = useState(false); // ✅ 모달 상태
+  const [showSuccess, setShowSuccess] = useState(false); 
   const r = useRouter();
 
   useEffect(() => {
@@ -40,7 +40,6 @@ export default function LoginPage() {
       setAccessToken(resp.accessToken);
       window.dispatchEvent(new Event("mps:auth:changed"));
 
-      // 토큰 반영 후 me 호출(실패 무시)
       try {
         await api("/auth/me", { skipAuthRedirect: true });
       } catch {}
@@ -48,10 +47,8 @@ export default function LoginPage() {
       const returnTo = sessionStorage.getItem("returnTo") || "/";
       sessionStorage.removeItem("returnTo");
 
-      // ✅ 성공 모달 열기
       setShowSuccess(true);
 
-      // 모달 닫힐 때 페이지 이동
       setTimeout(() => {
         setShowSuccess(false);
         r.replace(returnTo);
@@ -65,7 +62,6 @@ export default function LoginPage() {
 
   return (
     <div className="relative h-dvh w-full overflow-hidden text-white">
-      {/* ✅ 성공 모달 */}
       <SuccessModal
         isOpen={showSuccess}
         message="로그인이 완료되었습니다."
@@ -75,7 +71,6 @@ export default function LoginPage() {
         onClose={() => setShowSuccess(false)}
       />
 
-      {/* 배경 비디오 */}
       <video
         className="pointer-events-none absolute inset-0 h-full w-full object-cover"
         src="/videos/blockchain.mp4"
@@ -88,10 +83,8 @@ export default function LoginPage() {
       />
       <div className="pointer-events-none absolute inset-0 bg-black/40" />
 
-      {/* 콘텐츠 */}
       <div className="relative z-10 grid h-full place-items-center p-6">
         <div className="w-[min(920px,92vw)] h-[520px] rounded-2xl overflow-hidden mb-20">
-          {/* 타이틀 */}
           <div className="pt-6 text-center">
             <div
               className="text-3xl font-extrabold tracking-tight"
@@ -101,7 +94,6 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* 카드 */}
           <div
             className="mx-auto mt-10 w-[360px] rounded-xl p-6"
             style={{
@@ -149,12 +141,6 @@ export default function LoginPage() {
               </button>
 
               <div className="flex items-center justify-between pt-2">
-                <Link
-                  href="/forgot"
-                  className="text-xs text-white/60 hover:text-white/90 underline underline-offset-4"
-                >
-                  비밀번호를 잊으셨나요?
-                </Link>
                 <Link
                   href="/register/#top"
                   className="text-xs text-white/60 hover:text-white/90 underline underline-offset-4"

@@ -1,18 +1,19 @@
+// apps/backend/src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ServeStaticModule } from '@nestjs/serve-static';
-import { JwtModule } from '@nestjs/jwt';                 
+import { JwtModule } from '@nestjs/jwt';
 import { join } from 'path';
-
+import { ScheduleModule } from '@nestjs/schedule';   
 import biznoConfig from '../bizno.config';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-// import { AdminModule } from './admin/admin.module';
 import { ClientModule } from './client/client.module';
 import { MeModule } from './client/me/me.module';
 import { DbModule } from './db/db.module';
-import { ExploreModule } from './client/explore/explore.module'; 
+import { ExploreModule } from './client/explore/explore.module';
+import { TagsModule } from './client/tags/tags.module'; 
 
 @Module({
   imports: [
@@ -31,20 +32,22 @@ import { ExploreModule } from './client/explore/explore.module';
       serveRoot: '/uploads',
     }),
 
-    // JWT를 전역으로 사용(ExploreController에서 JwtService 주입)
     JwtModule.register({
-      global: true,                                 
-      secret: process.env.JWT_SECRET!,             
+      global: true,
+      secret: process.env.JWT_SECRET!,
       signOptions: { expiresIn: '30d' },
     }),
 
-    // AdminModule,
+    ScheduleModule.forRoot({
+      timezone: 'Asia/Seoul',
+    } as any),
+
+    // 기존 모듈들
     ClientModule,
     MeModule,
     DbModule,
-
-    // Explore 모듈 등록
-    ExploreModule,                                 
+    ExploreModule,
+    TagsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

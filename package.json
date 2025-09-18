@@ -10,8 +10,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@nestjs/mapped-types": "*",
     "@tanstack/react-query": "^5.84.2",
     "@tanstack/react-query-devtools": "^5.84.2",
-    "ethers": "^6.15.0"
+    "ethers": "^6.15.0",
+    "openai": "^5.20.1"
   }
 }

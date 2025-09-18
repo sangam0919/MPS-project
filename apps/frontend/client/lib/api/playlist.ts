@@ -1,4 +1,3 @@
-import { CreatePlaylistDto } from './../../../../backend/src/client/playlists/dto/create-playlist.dto';
 // app/api/playlist.ts
 import { api } from './core/http';
 
@@ -32,7 +31,7 @@ export type PlaylistDetail = {
 };
 
 export type UseResp = { count: number; addedToCompany?: number };
-export type MutateResp = { playlistId: number; count: number };
+export type MutateResp = { playlistId: number; count: number; added?: number }; // ← added 확장
 export type DeleteResp = { deleted: true };
 
 const BASE = '/playlist';
@@ -96,7 +95,7 @@ export async function usePlaylist(playlistId: number, trackIds?: number[]): Prom
   });
 }
 
-// PUT /playlist/:id/tracks
+// PUT /playlist/:id/tracks (전체 교체)
 export async function replacePlaylistTracks(playlistId: number, trackIds: number[]): Promise<MutateResp> {
   return await api(`${BASE}/${playlistId}/tracks`, {
     method: 'PUT',
@@ -104,9 +103,20 @@ export async function replacePlaylistTracks(playlistId: number, trackIds: number
   });
 }
 
-// POST /playlist/:id/tracks:remove
+export async function addTracksToPlaylist(playlistId: number, trackIds: number[]): Promise<MutateResp> {
+  return await api(`${BASE}/${playlistId}/tracks`, {
+    method: 'POST',
+    body: JSON.stringify({ trackIds }),
+  });
+}
+
+// (편의) 단일 트랙 추가
+export async function addTrackToPlaylist(playlistId: number, trackId: number): Promise<MutateResp> {
+  return addTracksToPlaylist(playlistId, [trackId]);
+}
+
 export async function removePlaylistTracks(playlistId: number, trackIds: number[]): Promise<MutateResp> {
-  return await api(`${BASE}/${playlistId}/tracks:remove`, {
+  return await api(`${BASE}/${playlistId}/tracks/remove`, {
     method: 'POST',
     body: JSON.stringify({ trackIds }),
   });
@@ -117,13 +127,12 @@ export async function deletePlaylist(playlistId: number): Promise<DeleteResp> {
   return await api(`${BASE}/${playlistId}`, { method: 'DELETE' });
 }
 
+// POST /playlist (생성)
 export async function createPlaylist(dto: CreatePlaylistReq): Promise<CreatePlaylistResp> {
+  // api()가 JSON을 돌려주는 헬퍼라는 전제에 맞춰 일관화
   const res = await api(`${BASE}`, {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(dto),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to create playlist (HTTP ${res.status})`);
-  }
-  return res.json();
+  return res as CreatePlaylistResp;
 }

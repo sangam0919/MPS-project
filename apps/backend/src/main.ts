@@ -29,6 +29,7 @@ async function bootstrap() {
         url: req.originalUrl,
         hasAuthHeader: Boolean(req.headers.authorization),
         hasCookie_mps_at: Boolean(req.cookies?.mps_at),
+        app 
       });
     }
     next();

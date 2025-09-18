@@ -7,7 +7,7 @@ export type PlayerTrack = {
   title: string;
   artist: string;
   cover?: string;
-  src: string;        // 실제 재생 URL은 필수!
+  src: string;
   duration?: number;
 };
 
@@ -15,13 +15,17 @@ type Ctx = {
   current: PlayerTrack | null;
   queue: PlayerTrack[];
   index: number;
-  // 제어
   playTrack: (t: PlayerTrack, queue?: PlayerTrack[], startIndex?: number) => void;
   next: () => void;
   prev: () => void;
-  // Footer에 자동재생 신호
   shouldAutoplay: boolean;
   consumeAutoplay: () => void;
+
+  // 👇 추가: 보이기/숨기기 제어
+  visible: boolean;
+  showPlayer: () => void;
+  hidePlayer: () => void;
+  togglePlayer: () => void;
 };
 
 const AudioPlayerContext = createContext<Ctx | null>(null);
@@ -31,17 +35,23 @@ export function AudioPlayerProvider({ children }: { children: React.ReactNode })
   const [index, setIndex] = useState(0);
   const [current, setCurrent] = useState<PlayerTrack | null>(null);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
+  const [visible, setVisible] = useState(false);        
 
-  const playTrack: Ctx["playTrack"] = (t, q, startIndex) => {
+  const showPlayer = () => setVisible(true);
+  const hidePlayer = () => setVisible(false);
+  const togglePlayer = () => setVisible(v => !v);
+
+  const playTrack: Ctx["playTrack"] = (t, q, startIdx) => {
     if (q && q.length) {
       setQueue(q);
-      setIndex(startIndex ?? 0);
+      setIndex(startIdx ?? 0);
     } else {
       setQueue([t]);
       setIndex(0);
     }
     setCurrent(t);
-    setShouldAutoplay(true); // Footer가 감지해서 .play() 하도록 신호
+    setShouldAutoplay(true);
+    setVisible(true);                                  
   };
 
   const next = () => {
@@ -50,6 +60,7 @@ export function AudioPlayerProvider({ children }: { children: React.ReactNode })
     setIndex(ni);
     setCurrent(queue[ni]);
     setShouldAutoplay(true);
+    setVisible(true);
   };
 
   const prev = () => {
@@ -58,13 +69,18 @@ export function AudioPlayerProvider({ children }: { children: React.ReactNode })
     setIndex(pi);
     setCurrent(queue[pi]);
     setShouldAutoplay(true);
+    setVisible(true);
   };
 
   const consumeAutoplay = () => setShouldAutoplay(false);
 
   const value = useMemo(
-    () => ({ current, queue, index, playTrack, next, prev, shouldAutoplay, consumeAutoplay }),
-    [current, queue, index, shouldAutoplay]
+    () => ({
+      current, queue, index, playTrack, next, prev,
+      shouldAutoplay, consumeAutoplay,
+      visible, showPlayer, hidePlayer, togglePlayer,  
+    }),
+    [current, queue, index, shouldAutoplay, visible]
   );
 
   return <AudioPlayerContext.Provider value={value}>{children}</AudioPlayerContext.Provider>;

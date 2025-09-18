@@ -1,10 +1,3 @@
-// app/components/sections/MusicList.tsx
-// - lib/api/musics.ts의 fetchMusics만 사용
-// - nextCursor 기반 페이지네이션 (20개씩)
-// - 서버엔 단일 category만 전송( ?category > ?categories[0] )
-// - 필터는 아코디언(한 번에 하나만 열림), 체크박스 → 칩 토글
-// - 검색 UI: 상단 MusicSearch (+ ?q= 연동)
-// - 리스트형(가로) UI
 "use client";
 
 import {
@@ -13,654 +6,926 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
   startTransition,
 } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import MusicDetailModal, { MusicDetail } from "./MusicDetailModal";
-import { fetchMusics } from "@/lib/api/musics";
-import type { Music as ApiMusic } from "@/lib/types/music";
+import MusicDetailModal, { type MusicDetail } from "./MusicDetailModal";
+import {
+  fetchMusics,
+  fetchMusicTagsBulk,
+  fetchCategories,
+  fetchRawTagChips,
+  fetchMusicDetail, 
+  useMusic,
+  type Music as ApiMusic,
+  type Category,
+  type MusicTagItem,
+} from "@/lib/api/musics";
 import MusicSearch from "./MusicSearch";
 import { LuChevronDown } from "react-icons/lu";
+import { resolveImageUrl } from "@/app/utils/resolveImageUrl";
+import { useMeOverview } from "@/hooks/useMeOverview";
+import { refreshAuth } from "@/lib/api/core/http";
+/* ───────── Types / constants ───────── */
 
-/* ---------------- Types ---------------- */
-
-// 접근 등급: 무료 사용 가능 / 구독자 전용
-type AccessLabel = "free" | "subscription";
-
-// 형식(Format): Full, 인트로만 사용
-const FORMATS = ["Full", "인트로"] as const;
+const FORMATS = ["Full", "Inst"] as const;
 type FormatLabel = (typeof FORMATS)[number];
 
-type Music = {
+type AccessReason = "LOGIN_REQUIRED" | "SUBSCRIPTION_REQUIRED" | undefined;
+
+type UIMusic = {
   id: number;
   title: string;
   artist: string;
   cover: string;
-  amount?: number;
+
   reward_amount?: number;
   reward_total?: number;
   reward_remaining?: number;
-  category?: string; // UI용
-  tags?: string[];   // UI용
-  format?: FormatLabel; // 형식 표시/필터
-  access?: AccessLabel; // FREE / 구독 전용
+
+  category?: string;
+  category_id?: number;
+  tags?: string[];
+  format?: FormatLabel;
+
+  access_type?: "FREE" | "SUBSCRIPTION";
+  locked?: boolean;
+  reason?: AccessReason;
 };
 
-type Playlist = { id: number; name: string };
-type Page<T> = { items: T[]; nextCursor: number | null };
+type SortKey = "popular" | "latest" | "remainderReward" | "totalReward" | "rewardOne";
 
-/* ---------------- Filters ---------------- */
-
-const MOODS = ["잔잔한", "신나는", "감성적인", "몽환적인", "파워풀", "여유로운"] as const;
-
-const CATEGORIES = [
-  "Pop","발라드","댄스","힙합","R&B","락","클래식","재즈","트로트","OST","인디","포크","뉴에이지","EDM","랩",
-] as const;
-
-/* ---------------- Sort ---------------- */
-
-type SortKey = "popular" | "latest" | "perReward" | "totalReward" | "remainderReward";
 const SORT_LABELS: Record<SortKey, string> = {
   popular: "인기순",
   latest: "최신순",
-  perReward: "1회 리워드 높은순",
-  totalReward: "총 리워드 많은순",
   remainderReward: "남은 리워드 많은순",
+  totalReward: "총 리워드 많은순",
+  rewardOne: "1회 리워드 높은순",
 };
 
-function sortByKey<T extends Partial<Music>>(list: T[], key: SortKey): T[] {
-  const copy = [...list];
-  switch (key) {
-    case "popular":
-      return copy.sort((a: any, b: any) => (b.views ?? b.likes ?? 0) - (a.views ?? a.likes ?? 0));
+function mapClientSortToServer(k: SortKey) {
+  switch (k) {
     case "latest":
-      return copy.sort(
-        (a: any, b: any) =>
-          new Date(b.date ?? b.createdAt ?? 0).getTime() - new Date(a.date ?? a.createdAt ?? 0).getTime()
-      );
-    case "perReward":
-      return copy.sort((a: any, b: any) => (b.reward_amount ?? 0) - (a.reward_amount ?? 0));
-    case "totalReward":
-      return copy.sort((a: any, b: any) => (b.reward_total ?? 0) - (a.reward_total ?? 0));
+      return "newest";
+    case "popular":
+      return "most_played";
     case "remainderReward":
-      return copy.sort((a: any, b: any) => (b.reward_remaining ?? 0) - (a.reward_remaining ?? 0));
+      return "remaining_reward";
+    case "totalReward":
+      return "total_reward";
+    case "rewardOne":
+      return "reward_one";
     default:
-      return copy;
+      return "relevance";
   }
 }
 
-/* ---------------- Query utils ---------------- */
 
-function parseCSV(value: string | null): string[] {
-  return value ? value.split(",").map((s) => s.trim()).filter(Boolean) : [];
-}
-function toCSV(values: string[]): string {
-  return values.join(",");
+const num = (v: any): number | undefined => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+function normalizeReason(v: any): "LOGIN_REQUIRED" | "SUBSCRIPTION_REQUIRED" | undefined {
+  const s = String(v ?? "").toLowerCase();
+  if (!s) return undefined;
+  if (s.includes("login")) return "LOGIN_REQUIRED";
+  if (s.includes("subscribe") || s.includes("subscription") || s.includes("paid") || s.includes("member"))
+    return "SUBSCRIPTION_REQUIRED";
+  return undefined;
 }
 
-// 서버로 전달할 단일 category 계산
-function categoryForServer(sp: URLSearchParams): string | undefined {
+function normalizeLocked(v: any): boolean {
+  if (typeof v === "boolean") return v;
+  const n = Number(v);
+  if (Number.isFinite(n)) return n === 1;
+  const s = String(v ?? "").toLowerCase().trim();
+  if (s === "true" || s === "locked" || s === "yes") return true;
+  if (s === "false" || s === "unlocked" || s === "no" || s === "0") return false;
+  return Boolean(v);
+}
+
+function normalizeAccess(
+  x: any,
+  obj?: any,
+): "FREE" | "SUBSCRIPTION" | undefined {
+  const s = String(x ?? "").toLowerCase();
+
+  if (["free", "public", "open", "unlocked"].includes(s)) return "FREE";
+  if (["subscription", "subscription_only", "sub", "paid", "members", "members_only", "premium", "pro", "vip", "paid_only", "locked", "private", "restricted"].includes(s))
+    return "SUBSCRIPTION";
+
+  if (typeof x === "boolean") return x ? "SUBSCRIPTION" : "FREE";
+  const nx = Number(x);
+  if (Number.isFinite(nx)) {
+    if (nx === 0) return "FREE";
+    if (nx >= 1) return "SUBSCRIPTION";
+  }
+
+  if (obj && typeof obj === "object") {
+    if ("is_free" in obj) return obj.is_free ? "FREE" : "SUBSCRIPTION";
+    if (obj.members_only || obj.subscription_only || obj.is_subscription || obj.is_premium) return "SUBSCRIPTION";
+    const price = Number(obj.price_per_play ?? obj.price ?? obj.play_price ?? NaN);
+    if (Number.isFinite(price)) return price > 0 ? "SUBSCRIPTION" : "FREE";
+  }
+  return undefined;
+}
+
+
+
+function mapApiToUI(m: ApiMusic): UIMusic {
+  const fmtApi = (m as any).format as "FULL" | "INSTRUMENTAL" | undefined;
+  const format: FormatLabel | undefined =
+    fmtApi === "INSTRUMENTAL" ? "Inst" : fmtApi === "FULL" ? "Full" : undefined;
+
+  // 응답에 access_type/locked/reason은 없음 → 힌트만 모으기
+  const rawAccess =
+    (m as any).access_type ??
+    (m as any).accessType ??
+    (m as any).access ??
+    (m as any).access_level ??
+    (m as any).subscription_only ??
+    (m as any).is_subscription ??
+    (m as any).is_premium ??
+    (m as any).paid;
+
+  // 새로: grade/can_use 사용
+  const grade = Number((m as any).grade_required ?? NaN); // 0이면 무료, 1이상이면 구독
+  const canUse = Boolean((m as any).can_use);
+
+  // 기존 normalizeAccess도 시도(혹시 모를 케이스 대비)
+  const normalizedFromServer = normalizeAccess(rawAccess, m);
+
+  // 최종 access_type 결정: 1) 서버 힌트 2) grade_required 규칙
+  let access_type: "FREE" | "SUBSCRIPTION" | undefined = normalizedFromServer;
+  if (!access_type) {
+    if (Number.isFinite(grade)) {
+      access_type = grade > 0 ? "SUBSCRIPTION" : "FREE";
+    }
+  }
+
+  // locked 계산: 리스트 응답에 locked 없음 → 구독 트랙인데 can_use=false면 잠금
+  let locked = false;
+  if (access_type === "SUBSCRIPTION") {
+    locked = !canUse;
+  }
+
+  // reason은 응답에 없으니 생략(렌더링은 access_type 기준으로 배지 뜸)
+  const reason: AccessReason | undefined = undefined;
+
+  return {
+    id: (m as any).id,
+    title: (m as any).title,
+    artist: (m as any).artist ?? "",
+    cover: (m as any).cover ?? (m as any).cover_image_url ?? "/placeholder.png",
+    reward_amount: Number((m as any).reward?.reward_one ?? undefined),
+    reward_total: Number((m as any).reward?.reward_total ?? undefined),
+    reward_remaining: Number((m as any).reward?.reward_remain ?? undefined),
+    category: (m as any).category ?? (m as any).category_name ?? undefined,
+    category_id: (m as any).category_id ?? (m as any).categoryId ?? undefined,
+    tags: undefined,
+    format,
+    access_type, // ← 이제 FREE/ SUBSCRIPTION 들어옴
+    locked,
+    reason,
+  };
+}
+
+
+
+
+
+function categoryIdForServer(sp: URLSearchParams): string | undefined {
   const single = sp.get("category");
   if (single) return single;
-  const multi = parseCSV(sp.get("categories"));
-  return multi[0];
+  const csv = sp.get("categories");
+  if (!csv) return undefined;
+  const arr = csv.split(",").map((s) => s.trim()).filter(Boolean);
+  return arr[0]; 
 }
 
-/* ---------------- Reward fallback ---------------- */
 
-function withMockRewards<T extends Partial<Music> & { amount?: number }>(
-  m: T,
-  seed = 0
-): T & Required<Pick<Music, "reward_amount" | "reward_total" | "reward_remaining">> {
-  const already =
-    m.reward_amount !== undefined &&
-    m.reward_total !== undefined &&
-    m.reward_remaining !== undefined;
-  if (already) return m as T & Required<Pick<Music, "reward_amount" | "reward_total" | "reward_remaining">>;
+const PAGE_SIZE = 20;
 
-  const price = Math.max(0, Math.round(Number(m.amount) || 0));
-  const reward_amount = Math.max(1, Math.round(price * 0.01));
-  const cap = 200 + ((seed * 13) % 150);
-  const used = Math.min(cap, Math.floor((seed * 7) % cap));
-  const reward_total = reward_amount * cap;
-  const reward_remaining = Math.max(0, reward_total - reward_amount * used);
-  return { ...m, reward_amount, reward_total, reward_remaining };
-}
-
-/* ---------------- UI helpers: category/tags/format/access ---------------- */
-
-// 카테고리/태그 mock
-function withMockCategoryTags<T extends Partial<Music>>(
-  m: T,
-  seed = 0,
-  desired = 5
-): T & Required<Pick<Music, "category" | "tags">> {
-  const cat = m.category ?? CATEGORIES[Math.abs(seed + (Number(m.id) || 0)) % CATEGORIES.length];
-  const base = Array.isArray(m.tags) ? [...m.tags] : [];
-  const set = new Set(base);
-  let idx = 0;
-  while (set.size < desired) {
-    const pick = MOODS[(seed + 1 + idx * 2) % MOODS.length];
-    set.add(pick as string);
-    idx++;
-    if (idx > 20) break;
-  }
-  const tags = Array.from(set).slice(0, desired) as string[];
-  return { ...(m as any), category: cat, tags };
-}
-
-// 형식 mock: Full/인트로
-function withMockFormat<T extends Partial<Music>>(m: T, seed = 0): T & { format: FormatLabel } {
-  const idx = Math.abs((Number(m.id) || 0) + seed) % FORMATS.length;
-  const format = FORMATS[idx];
-  return { ...(m as any), format };
-}
-
-// 접근 등급 mock: 대체로 free, 일부 subscription
-function withMockAccess<T extends Partial<Music>>(m: T, seed = 0): T & { access: AccessLabel } {
-  const idx = Math.abs((Number((m as any).id) || 0) + seed) % 6; // 약 1/6 확률로 구독 전용
-  const access: AccessLabel = idx === 5 ? "subscription" : "free";
-  return { ...(m as any), access };
-}
-
-/* ---------------- Component ---------------- */
-
-const PAGE_SIZE = 20; // 20개씩 페이지네이션
-
-export default function MusicList() {
+export default function MusicList({ initialQuery = {} }) {
   const sp = useSearchParams();
   const router = useRouter();
 
-  // URL -> 현재 선택 상태
-  const selectedMoods = useMemo(() => parseCSV(sp.get("moods")), [sp]);
-  const selectedCategories = useMemo(() => {
-    const multi = new Set(parseCSV(sp.get("categories")));
-    const single = sp.get("category");
-    if (single) multi.add(single);
-    return Array.from(multi);
-  }, [sp]);
+  const q = sp.get("q") ?? "";
+  const sortKey = (sp.get("sort") as SortKey) ?? "popular";
+  const serverCategoryId = useMemo(() => categoryIdForServer(sp), [sp]);
+  const [sortOpen, setSortOpen] = useState(false);
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalItem, setModalItem] = useState<MusicDetail | null>(null);
+  const [usage, setUsage] = useState<{ perRead: number; monthlyTotal: number; remaining: number }>();
+
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showSubscribeModal, setShowSubscribeModal] = useState(false);
+
   const selectedFormats = useMemo<FormatLabel[]>(() => {
-    const arr = parseCSV(sp.get("formats"));
+    const arr = (sp.get("formats") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     return arr.filter((v): v is FormatLabel => (FORMATS as readonly string[]).includes(v));
   }, [sp]);
 
-  // 검색어
-  const q = sp.get("q") ?? "";
+  const { data: overview, refresh: refreshMe } = useMeOverview();
+  const [upgrading, setUpgrading] = useState(false);
+  const isActiveSub = useMemo(() => {
+    const plan = String(overview?.subscription?.plan ?? "free").toLowerCase();
+    const status = String(overview?.subscription?.status ?? "none").toLowerCase();
+    const days = Number(overview?.subscription?.remainingDays ?? 0);
+    return status === "active" || status === "trialing" || days > 0 || plan !== "free";
+  }, [overview]);
 
-  // 정렬 파라미터/드롭다운
-  const sortParam = (sp.get("sort") as SortKey) ?? "popular";
-  const [sortOpen, setSortOpen] = useState(false);
-  const setSort = (v: SortKey) => {
-    const qs = new URLSearchParams(sp.toString());
-    qs.set("sort", v);
-    startTransition(() => {
-      router.replace("?" + qs.toString(), { scroll: false });
-      setSortOpen(false);
-    });
-  };
-
-  // 필터 변경 의존키
-  const depsKey = useMemo(
+  const selectedMoodNames = useMemo<string[]>(
     () =>
-      JSON.stringify({
-        category: sp.get("category"),
-        categories: sp.get("categories"),
-        formats: sp.get("formats"),
-        q,
-        sort: sortParam,
-      }),
-    [sp, q, sortParam]
+      Array.from(
+        new Set(
+          (sp.get("moods") ?? "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        ),
+      ),
+    [sp],
   );
 
-  // URL 업데이트
-  const pushParams = useCallback(
-    (patch: {
-      moods?: string[];
-      categories?: string[];
-      formats?: FormatLabel[];
-      clearCategorySingle?: boolean;
-      q?: string;
-    }) => {
-      const next = new URLSearchParams(sp.toString());
+  const [categories, setCategories] = useState<Category[]>([]);
+  const selectedCategoryIds = useMemo<string[]>(() => {
+    const list: string[] = [];
+    const multi = (sp.get("categories") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const single = (sp.get("category") ?? "").trim();
 
-      if (patch.moods) {
-        patch.moods.length ? next.set("moods", toCSV(patch.moods)) : next.delete("moods");
-      }
-      if (patch.categories) {
-        if (patch.categories.length) {
-          next.set("categories", toCSV(patch.categories));
-          if (patch.clearCategorySingle) next.delete("category");
-        } else {
-          next.delete("categories");
-          if (patch.clearCategorySingle) next.delete("category");
-        }
-      }
-      if (patch.formats) {
-        patch.formats.length ? next.set("formats", toCSV(patch.formats)) : next.delete("formats");
-      }
-      if (patch.q !== undefined) {
-        const clean = (patch.q ?? "").trim();
-        clean ? next.set("q", clean) : next.delete("q");
-      }
+    list.push(...multi);
+    if (single) list.push(single);
 
-      next.delete("cursor"); // 페이지네이션 초기화
-      startTransition(() => router.push(`?${next.toString()}`, { scroll: false }));
-    },
-    [router, sp]
-  );
+    return Array.from(new Set(list));
+  }, [sp]);
 
-  // 아코디언 열림 상태(한 번에 하나만)
-  const [open, setOpen] = useState<null | "moods" | "categories" | "formats">(null);
+  const [moodItems, setMoodItems] = useState<string[]>([]);
 
-  // 목록/페이지네이션
-  const [items, setItems] = useState<Music[]>([]);
-  const [err, setErr] = useState<string>("");
+  const [items, setItems] = useState<UIMusic[]>([]);
+  const [err, setErr] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const [cursor, setCursor] = useState<number | "first">("first");
+  const [tagsById, setTagsById] = useState<Record<number, string[]>>({});
+
+  const [cursor, setCursor] = useState<string | number | "first">("first");
   const [hasMore, setHasMore] = useState(true);
 
-  const seenIdsRef = useRef<Set<number>>(new Set());
   const inflightRef = useRef(false);
-  const hasMoreRef = useRef(hasMore);
-  const cursorRef = useRef<number | "first">(cursor);
-  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
-  useEffect(() => { cursorRef.current = cursor; }, [cursor]);
-
+  const seenIdsRef = useRef<Set<number>>(new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const reqSeqRef = useRef(0);
+  const [searchInput, setSearchInput] = useState(q);
+  useEffect(() => setSearchInput(q), [q]);
 
-  // 서버 -> UI 매핑 (+ format/access mock)
-  const mapApiMusic = (m: ApiMusic, i: number): Music => {
-    const base: Partial<Music> = {
-      id: m.id,
-      title: m.title,
-      artist: (m as any).artist ?? "",
-      cover: (m as any).cover ?? (m as any).cover_image_url ?? "/placeholder.png",
-      amount: (m as any).price ?? (m as any).amount,
-      reward_amount: (m as any).reward_amount,
-      reward_total: (m as any).reward_total,
-      reward_remaining: (m as any).reward_remaining,
-      category: (m as any).category ?? (m as any).category_name,
-      tags: Array.isArray((m as any).tags) ? (m as any).tags.slice(0, 5) : undefined,
-      access: (m as any).access as AccessLabel | undefined, // 서버가 내려주면 사용
-    };
-    const withCT = withMockCategoryTags(base, i);
-    const withFmt = withMockFormat(withCT, i);
-    const withAccess = withCT.access ? (withFmt as Music) : withMockAccess(withFmt, i);
-    const withRewards = withMockRewards(withAccess, i);
-    return withRewards as Music;
+  type URLPatch = {
+    q?: string;
+    sort?: SortKey;
+    moods?: string[]; 
+    formats?: string[]; 
+    categories?: string[]; 
+    category?: string; 
   };
 
-  // 다음 페이지 로드 (20개씩)
-  const fetchNext = useCallback(async () => {
-    if (inflightRef.current || !hasMoreRef.current) return;
-    inflightRef.current = true;
-    setErr("");
+  const patchParams = useCallback(
+    (patch: URLPatch) => {
+      const next = new URLSearchParams(sp.toString());
+
+      const setArr = (key: string, arr?: string[]) => {
+        if (arr && arr.length) next.set(key, arr.join(","));
+        else next.delete(key);
+      };
+
+      if (patch.q !== undefined) {
+        const s = (patch.q ?? "").trim();
+        s ? next.set("q", s) : next.delete("q");
+      }
+
+      if (patch.sort !== undefined) next.set("sort", String(patch.sort));
+      if (patch.moods !== undefined) setArr("moods", patch.moods);
+      if (patch.formats !== undefined) setArr("formats", patch.formats);
+      if (patch.categories !== undefined) {
+        setArr("categories", patch.categories);
+        next.delete("category"); 
+      }
+      if (patch.category !== undefined) {
+        const s = (patch.category ?? "").trim();
+        if (s) next.set("category", s);
+        else next.delete("category");
+        next.delete("categories");
+      }
+
+      next.delete("cursor");
+      startTransition(() => router.replace("?" + next.toString(), { scroll: false }));
+    },
+    [router, sp],
+  );
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await fetchCategories();
+        const deduped = Array.from(new Map(list.map((c) => [String(c.category_id), c])).values());
+        setCategories(deduped);
+      } catch (e) {
+        console.warn("[MusicList] fetchCategories 실패:", e);
+      }
+    })();
+
+    (async () => {
+      try {
+        const chips = await fetchRawTagChips("mood");
+        const names = chips.map((c) => String(c.name || "").trim()).filter(Boolean);
+        setMoodItems(Array.from(new Set(names)));
+      } catch (e) {
+        console.warn("[MusicList] fetchRawTagChips 실패:", e);
+        setMoodItems([]);
+      }
+    })();
+  }, []);
+
+  const fetchNext = useCallback(
+    async (cursorArg?: number | "first", replace = false) => {
+      if (inflightRef.current) return;
+      if (!hasMore && !(replace && cursorArg === "first")) return;
+  
+      // ★ 이 호출의 고유 요청 id 발급
+      const mySeq = ++reqSeqRef.current;
+  
+      inflightRef.current = true;
+      setErr("");
+  
+      try {
+        const eff = cursorArg ?? cursor;
+        const cursorParam = eff === "first" ? undefined : eff;
+  
+        const req = {
+          q: q || undefined,
+          sort: mapClientSortToServer(sortKey),
+          limit: PAGE_SIZE,
+          cursor: cursorParam,
+          category_id: serverCategoryId ? Number(serverCategoryId) : undefined,
+          categories: selectedCategoryIds.map((s) => Number(s)).filter(Number.isFinite),
+          formats: selectedFormats.map((f) => (f === "Inst" ? "INSTRUMENTAL" : "FULL")),
+          moods: selectedMoodNames,
+        };
+  
+        // (옵션) 디버깅
+        console.log("[MusicList] fetchMusics(req) ▶", req);
+  
+        const page = await fetchMusics(req as any);
+  
+        // ★ 여기서도 내 요청이 최신인지 확인 (늦게 끝난 이전 요청이면 버린다)
+        if (mySeq !== reqSeqRef.current) return;
+  
+        const rawItems = page.items || [];
+        const batch = rawItems.map(mapApiToUI);
+  
+        // ★ 클라 보정 필터(형식)
+        const filteredByClient = (() => {
+          if (!selectedFormats.length) return batch;
+          const wantInst = selectedFormats.includes("Inst");
+          const wantFull = selectedFormats.includes("Full");
+          const out = batch.filter((x) => {
+            if (!x.format) return false;
+            return (wantInst && x.format === "Inst") || (wantFull && x.format === "Full");
+          });
+          const stat = out.reduce((acc, x) => {
+            const k = x.format || "N/A";
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+          }, {} as Record<string, number>);
+          console.log("[MusicList] client-filtered format stats ▶", stat);
+          return out;
+        })();
+  
+        if (replace) {
+          // ★ 교체 모드일 땐 먼저 누적/태그 캐시 싹 리셋
+          seenIdsRef.current = new Set();
+          setTagsById({});
+        }
+  
+        const seenGlobal = seenIdsRef.current;
+        const seenLocal = new Set<number>();
+  
+        const deduped = filteredByClient.filter((m) => {
+          if (!m || typeof m.id !== "number") return false;
+          if (seenLocal.has(m.id)) return false;
+          seenLocal.add(m.id);
+          if (seenGlobal.has(m.id)) return false;
+          seenGlobal.add(m.id);
+          return true;
+        });
+        
+
+        
+
+        const ensureAccessBadge = (it: UIMusic): UIMusic => {
+          if (it.access_type === "FREE" || it.access_type === "SUBSCRIPTION") return it;
+          if (it.locked || it.reason === "SUBSCRIPTION_REQUIRED") {
+            return { ...it, access_type: "SUBSCRIPTION" };
+          }
+          return it;
+        };
+  
+        const nextItems: UIMusic[] = deduped.map((raw) => {
+          const it = ensureAccessBadge(raw);
+          if (!isActiveSub) return it;
+          const needsSub =
+            it.access_type === "SUBSCRIPTION" || it.locked || it.reason === "SUBSCRIPTION_REQUIRED";
+          return needsSub ? { ...it, access_type: "SUBSCRIPTION", locked: false, reason: undefined } : it;
+        });
+  
+        // ★ 여기서도 최신 요청인지 한 번 더 체크
+        if (mySeq !== reqSeqRef.current) return;
+  
+        if (replace) setItems(nextItems);
+        else setItems((prev) => [...prev, ...nextItems]);
+  
+        // 태그 벌크 (여기도 최신 요청인지 체크)
+        try {
+          const ids = deduped.map((d) => d.id);
+          if (ids.length) {
+            const map = await fetchMusicTagsBulk(ids);
+            if (mySeq !== reqSeqRef.current) return; // ★ 늦게 끝나면 무시
+            const next: Record<number, string[]> = {};
+            for (const id of ids) {
+              const arr: MusicTagItem[] = (map as any)[id] || [];
+              const out: string[] = [];
+              const seen = new Set<string>();
+              for (const t of arr) {
+                const s = String((t as any).text || "").trim();
+                if (!s) continue;
+                const key = s.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(s);
+              }
+              if (out.length) next[id] = out;
+            }
+            if (replace) setTagsById(next);
+            else setTagsById((prev) => ({ ...prev, ...next }));
+          }
+        } catch {}
+  
+        setCursor(((page.nextCursor ?? null) as any) ?? null);
+        setHasMore(Boolean(page?.hasMore ?? page?.nextCursor != null));
+      } catch (e: any) {
+        setErr(e?.message || "목록을 불러오지 못했습니다.");
+      } finally {
+        // ★ 최신 요청만 inflight 종료
+        if (mySeq === reqSeqRef.current) {
+          inflightRef.current = false;
+        }
+      }
+    },
+    [
+      cursor,
+      hasMore,
+      q,
+      sortKey,
+      serverCategoryId,
+      selectedCategoryIds,
+      selectedFormats,
+      selectedMoodNames,
+      isActiveSub,
+    ],
+  );
+  const applyPaidUpgrade = async () => {
+    if (upgrading) return;
+    setUpgrading(true);
     try {
-      const cat = categoryForServer(sp);
-      const page = (await fetchMusics({
-        cursor: cursorRef.current,
-        limit: PAGE_SIZE,
-        category: cat,
-      })) as Page<ApiMusic>;
-
-      const batchRaw = Array.isArray(page.items) ? page.items : [];
-      const batch = batchRaw.map(mapApiMusic);
-
-      // 중복 제거
-      const seen = seenIdsRef.current;
-      const deduped = batch.filter((m) => {
-        if (!m || typeof m.id !== "number") return false;
-        if (seen.has(m.id)) return false;
-        seen.add(m.id);
-        return true;
+      // 1) 구독 상태 업데이트(네 백엔드 규격 맞춰서)
+      await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/me/subscription-settings`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ plan: "standard", autoRenew: true }), // business면 바꿔
       });
-
-      // 클라 사이드 검색 필터 (제목/아티스트)
-      const qLower = (q || "").toLowerCase();
-      let filtered = qLower
-        ? deduped.filter(
-            (m) =>
-              m.title?.toLowerCase().includes(qLower) ||
-              m.artist?.toLowerCase().includes(qLower)
-          )
-        : deduped;
-
-      // 형식(Format) 필터
-      if (selectedFormats.length > 0) {
-        const set = new Set(selectedFormats);
-        filtered = filtered.filter((m) => (m.format ? set.has(m.format) : false));
-      }
-
-      if (filtered.length > 0) setItems((prev) => sortByKey([...prev, ...filtered], sortParam));
-
-      if (page.nextCursor !== null && page.nextCursor !== undefined) {
-        setCursor(page.nextCursor as number);
-        setHasMore(true);
-      } else {
-        setHasMore(false);
-      }
-    } catch (e: any) {
-      setErr(e?.message || "목록을 불러오지 못했습니다.");
+  
+      // 2) 새 JWT 발급(쿠키 갱신)
+      await refreshAuth(); // /auth/refresh 호출
+  
+      // 3) 전역 me/overview 갱신
+      await refreshMe();
+  
+      // 4) 리스트 첫 페이지부터 리로드
+      setIsRefreshing(true);
+      await fetchNext("first", true);
+      setIsRefreshing(false);
+  
+      // 5) 모달 닫기
+      setShowSubscribeModal(false);
     } finally {
-      inflightRef.current = false;
+      setUpgrading(false);
     }
-  }, [sp, q, sortParam, selectedFormats]);
+  };
+  
 
-  // 필터/검색/정렬 변경 → 초기화 후 첫 로드
+  const depsKey = useMemo(
+      () =>
+        JSON.stringify({
+          q,
+          sortKey,
+          category: sp.get("category"),
+          categories: sp.get("categories"),
+          formats: sp.get("formats"),
+          moods: sp.get("moods"),
+          isActiveSub,
+        }),
+      [q, sortKey, sp, isActiveSub],
+    );
   useEffect(() => {
-    setItems([]);
-    setHasMore(true);
-    setErr("");
-    setCursor("first");
-    seenIdsRef.current.clear();
-    fetchNext();
-  }, [depsKey, fetchNext]);
+    setIsRefreshing(true);
+    fetchNext("first", true).finally(() => setIsRefreshing(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depsKey]);
 
-  // 무한 스크롤
+  const handleSubscribe = async (musicId: number) => {
+    try {
+      const res = await useMusic(musicId);
+      if (res.isUsing) {
+        setModalItem((prev) => (prev ? { ...prev, isSubscribed: true } : prev));
+      }
+    } catch (e) {
+    }
+  };
+
   useEffect(() => {
-    if (!sentinelRef.current) return;
-    if (observerRef.current) observerRef.current.disconnect();
-    observerRef.current = new IntersectionObserver((entries) => {
-      const hit = entries.some((e) => e.isIntersecting);
-      if (hit) fetchNext();
-    });
-    observerRef.current.observe(sentinelRef.current);
+    if (typeof window === "undefined") return;
+  
+    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    const isReload = nav?.type === "reload";
+  
+    if (isReload) {
+      const next = new URLSearchParams(sp.toString());
+      next.delete("moods");
+      next.delete("categories");
+      next.delete("category");
+      next.delete("formats");
+      next.delete("cursor");
+      next.set("filtersReset", "1");
+  
+      startTransition(() => router.replace("?" + next.toString(), { scroll: false }));
+    }
+  }, []);
+
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node) return;
+
+    observerRef.current?.disconnect();
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.some((e) => e.isIntersecting);
+        if (!hit) return;
+        fetchNext(cursor === "first" ? "first" : undefined);
+      },
+      {
+        root: null,
+        rootMargin: "200px 0px",
+        threshold: 0,
+      },
+    );
+
+    observerRef.current.observe(node);
     return () => observerRef.current?.disconnect();
-  }, [fetchNext]);
+  }, [fetchNext, cursor]);
 
-  // 초기 컨텐츠가 화면을 못 채우면 자동 추가 로드
-  useEffect(() => {
-    if (!hasMoreRef.current || inflightRef.current) return;
-    if (document.body.scrollHeight <= window.innerHeight + 40) fetchNext();
-  }, [items.length, fetchNext]);
 
-  // 정렬 키만 바뀐 경우 현재 목록 재정렬
-  useEffect(() => {
-    setItems((prev) => sortByKey(prev, sortParam));
-  }, [sortParam]);
 
-  // 상세 모달
-  const [modalOpen, setModalOpen] = useState(false);
-  const [detail, setDetail] = useState<MusicDetail | null>(null);
-  const [playlists, setPlaylists] = useState<Playlist[]>([{ id: 101, name: "내 첫 플레이리스트" }]);
-
-  // 현재 기업 플랜 상태 (예: 무료). 실제 로그인/프로필 연동 시 교체.
-  const myPlan: AccessLabel = "free";
-  const [gateOpen, setGateOpen] = useState(false);
-
-  async function fetchMusicDetail(id: number): Promise<MusicDetail> {
-    const base = items.find((t) => t.id === id);
-    return {
-      id,
-      title: base?.title ?? "",
-      artist: base?.artist ?? "",
-      cover: base?.cover,
-      lyrics: "가사/설명은 상세 API로 교체하세요.",
-      company: { id: 1, name: "MPS Music", tier: "Business" },
-      isSubscribed: false,
-    };
-  }
-
-  const handleSelect = async (id: number) => {
-    const item = items.find((t) => t.id === id);
-    const acc: AccessLabel = item?.access ?? "free";
-
-    // 무료 플랜이 구독 전용 음원을 클릭하면 안내 모달 표시
-    if (acc === "subscription" && myPlan === "free") {
-      setGateOpen(true);
+  const openDetail = async (m: UIMusic) => {
+    if (m.locked) {
+      if (m.reason === "LOGIN_REQUIRED") setShowLoginModal(true);
+      else if (m.reason === "SUBSCRIPTION_REQUIRED") setShowSubscribeModal(true);
       return;
     }
 
-    const d = await fetchMusicDetail(id);
-    setDetail(d);
-    setModalOpen(true);
+    try {
+      const d = await fetchMusicDetail(m.id);
+                const rawAccess =
+            (d as any).access_type ??
+            (d as any).accessType ??
+            (d as any).access ??
+            (d as any).access_level ??
+            m.access_type;
+
+        const inferredFromFlags =
+          ((d as any).locked ?? (d as any).is_locked ?? m.locked) ||
+          ((d as any).reason ?? m.reason) === "SUBSCRIPTION_REQUIRED"
+            ? "SUBSCRIPTION"
+            : undefined;
+
+      const detail: MusicDetail = {
+        id: d.id,
+        title: d.title,
+        artist: d.artist,
+        cover: d.cover_image_url ?? m.cover,
+        lyrics: d.lyrics_text ?? "가사 준비중...\n\n(상세 API 연결됨)",
+        company: { id: 0, name: "—" },
+        isSubscribed: !!d.is_using,
+        lyricsDownloadCount: d.lyrics_download_count ?? 0,
+        category: d.category_name ?? m.category ?? null,
+        access_type: normalizeAccess(inferredFromFlags ?? rawAccess, d),
+        locked: Boolean((d as any).locked ?? (d as any).is_locked ?? m.locked),
+        reason: (d as any).reason ?? m.reason,
+      };
+      setModalItem(detail);
+      setUsage({
+        perRead: Number(d.reward?.reward_one ?? m.reward_amount ?? 0),
+        monthlyTotal: Number(d.reward?.reward_total ?? m.reward_total ?? 0),
+        remaining: Number(d.reward?.reward_remain ?? m.reward_remaining ?? 0),
+      });
+      setModalOpen(true);
+    } catch (e: any) {
+      const msg = e?.body?.message || e?.message;
+      if (e?.status === 401 || msg === "LOGIN_REQUIRED") {
+        setShowLoginModal(true);
+        return;
+      }
+      if (e?.status === 403 || msg === "SUBSCRIPTION_REQUIRED") {
+        setShowSubscribeModal(true);
+        return;
+      }
+      const d: MusicDetail = {
+        id: m.id,
+        title: m.title,
+        artist: m.artist,
+        cover: m.cover,
+        lyrics: "가사/설명은 상세 API로 교체하세요.",
+        company: { id: 1, name: "MPS Music" },
+        isSubscribed: false,
+      };
+      setModalItem(d);
+      setUsage({
+        perRead: m.reward_amount ?? 0,
+        monthlyTotal: m.reward_total ?? 0,
+        remaining: m.reward_remaining ?? 0,
+      });
+      setModalOpen(true);
+    }
   };
-
-  const onSubscribe = async (_musicId: number) => {
-    setDetail((prev) => (prev ? { ...prev, isSubscribed: true } : prev));
-  };
-  const onAddToPlaylist = async (musicId: number, playlistId: number) => {
-    console.log("addToPlaylist", { musicId, playlistId });
-  };
-  const onCreatePlaylist = async (name: string) => {
-    const pl = { id: Date.now(), name };
-    setPlaylists((p) => [pl, ...p]);
-    return pl;
-  };
-
-  /* ---------------- 로딩/빈 상태 ---------------- */
-
-  if (!items.length && inflightRef.current) {
-    return (
-      <>
-        {/* 검색바 */}
-        <div className="mb-3 flex justify-center">
-          <MusicSearch
-            value={q}
-            onChange={(next) => pushParams({ q: next })}
-            onSearch={(next) => pushParams({ q: next })}
-          />
-        </div>
-
-        {/* 정렬 드롭다운 */}
-        <div className="mb-2 flex justify-end">
-          <SortDropdown open={sortOpen} setOpen={setSortOpen} sortKey={sortParam} onSelect={setSort} />
-        </div>
-
-        <FilterBar
-          selectedMoods={selectedMoods}
-          selectedCategories={selectedCategories}
-          selectedFormats={selectedFormats}
-          open={open}
-          setOpen={setOpen}
-          pushParams={pushParams}
-        />
-
-        {/* 리스트형 스켈레톤 */}
-        <ul className="mt-3 divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white/70 dark:divide-white/10 dark:border-white/10 dark:bg-white/5">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <li key={i} className="flex gap-2 p-2">
-              <div className="h-16 w-16 flex-shrink-0 animate-pulse rounded-md bg-zinc-200/60 dark:bg-white/10" />
-              <div className="flex w-full flex-col justify-between">
-                <div className="h-4 w-1/2 animate-pulse bg-zinc-200/60 dark:bg-white/10" />
-                <div className="mt-1 h-3 w-1/3 animate-pulse bg-zinc-200/60 dark:bg-white/10" />
-                <div className="mt-2 flex gap-2">
-                  <div className="h-5 w-12 animate-pulse rounded-full bg-zinc-200/60 dark:bg-white/10" />
-                  <div className="h-5 w-14 animate-pulse rounded-full bg-zinc-200/60 dark:bg-white/10" />
-                  <div className="h-5 w-14 animate-pulse rounded-full bg-zinc-200/60 dark:bg-white/10" />
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </>
-    );
-  }
-
-  if (!items.length && !inflightRef.current) {
-    return (
-      <>
-        <div className="mb-3 flex justify-center">
-          <MusicSearch value={q} onChange={(next) => pushParams({ q: next })} />
-        </div>
-
-        <div className="mb-2 flex justify-end">
-          <SortDropdown open={sortOpen} setOpen={setSortOpen} sortKey={sortParam} onSelect={setSort} />
-        </div>
-
-        <FilterBar
-          selectedMoods={selectedMoods}
-          selectedCategories={selectedCategories}
-          selectedFormats={selectedFormats}
-          open={open}
-          setOpen={setOpen}
-          pushParams={pushParams}
-        />
-        <div className="mt-3 rounded-xl border border-zinc-200 bg-white/70 p-6 text-center text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
-          {err || "조건에 맞는 음악이 없습니다."}
-        </div>
-      </>
-    );
-  }
-
-  /* ---------------- 리스트 렌더 ---------------- */
 
   return (
     <>
-      {/* 검색바 */}
-      <div className="mb-3 flex justify-center">
-        <MusicSearch value={q} onChange={(next) => pushParams({ q: next })} />
+      <div className="mb-3 flex justify-center px-2 sm:px-0">
+        <MusicSearch
+          value={searchInput}
+          onChange={setSearchInput}
+          onSearch={(next) => patchParams({ q: next })}
+        />
       </div>
 
-      {/* 정렬 드롭다운 */}
-      <div className="mb-2 flex justify-end">
-        <SortDropdown open={sortOpen} setOpen={setSortOpen} sortKey={sortParam} onSelect={setSort} />
+      <div className="mb-2 flex justify-end px-2 sm:px-0">
+        <SortDropdown
+          open={sortOpen}
+          setOpen={setSortOpen}
+          sortKey={sortKey}
+          onSelect={(v) => patchParams({ sort: v })}
+          allowedKeys={["popular", "latest", "remainderReward", "totalReward", "rewardOne"]}
+        />
       </div>
 
       <FilterBar
-        selectedMoods={selectedMoods}
-        selectedCategories={selectedCategories}
+        categories={categories}
+        selectedCategoryIds={selectedCategoryIds}
         selectedFormats={selectedFormats}
-        open={open}
-        setOpen={setOpen}
-        pushParams={pushParams}
+        selectedMoods={selectedMoodNames}
+        moodItems={moodItems}
+        onChange={(p) => patchParams(p)}
       />
 
-      {/* 리스트형: 한 줄 아이템 */}
+      {err && !items.length ? (
+        <div className="mt-3 rounded-xl border border-zinc-200 bg-white/70 p-6 text-center text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
+          {err}
+        </div>
+      ) : null}
+
       <ul className="mt-3 divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white/70 dark:divide-white/10 dark:border-white/10 dark:bg-white/5">
-        {items.map((m, i) => {
-          const rewards = withMockRewards(m, i);
-          const ct = withMockCategoryTags(m, i);
-          const fmt = m.format ?? withMockFormat(m, i).format;
-          const acc = m.access ?? withMockAccess(m, i).access;
+        {items.map((m) => {
+          const tags = tagsById[m.id] ?? m.tags ?? [];
+          const hasReward =
+            (m.reward_amount ?? 0) > 0 ||
+            (m.reward_total ?? 0) > 0 ||
+            (m.reward_remaining ?? 0) > 0;
 
           return (
             <li
               key={m.id}
-              className="group flex cursor-pointer items-stretch gap-2 p-2 transition hover:bg-white dark:hover:bg-white/10"
-              onClick={() => handleSelect(m.id)}
+              onClick={() => openDetail(m)}
+              className="group flex flex-col sm:flex-row cursor-pointer items-start sm:items-stretch gap-2 p-2 transition hover:bg-white dark:hover:bg-white/10 select-none" /* 모바일 세로, 데스크톱 가로 */
+              onMouseDown={(e) => e.preventDefault()}
             >
-              {/* 썸네일 */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <div className="relative">
+              <div className="relative shrink-0">
                 <img
-                  src={m.cover}
-                  alt={m.title}
-                  className="h-16 w-16 flex-shrink-0 rounded-md object-cover ring-1 ring-black/5"
+                  src={resolveImageUrl(m.cover ?? "", "music")}
+                  alt={`${m.title} cover`}
+                  className="h-16 w-16 rounded-md object-cover ring-1 ring-zinc-200 dark:ring-white/10 pointer-events-none select-none"
+                  draggable={false}
                 />
-                {/* 형식 배지 */}
-                <span className="absolute right-1 top-1 rounded bg-black/70 px-1.5 py-[2px] text-[10px] font-semibold text-white">
-                  {fmt === "인트로" ? "INTRO" : "FULL"}
-                </span>
-                {/* 접근 배지: FREE / SUBS */}
-                <span
-                  className={`absolute left-1 bottom-1 rounded px-1.5 py-[2px] text-[10px] font-semibold ${
-                    acc === "free"
-                      ? "bg-emerald-500 text-black"
-                      : "bg-indigo-500 text-white"
-                  }`}
-                >
-                  {acc === "free" ? "FREE" : "SUBS"}
-                </span>
-              </div>
 
-              {/* 본문 */}
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-1">
-                  <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-900 dark:text-white">
-                    {m.title}
-                  </h3>
-                  {/* 리워드 배지 */}
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-teal-400 to-cyan-400 px-2 py-0.5 text-[10px] font-semibold text-black shadow-sm ring-1 ring-black/10">
-                      1회 {rewards.reward_amount}
-                    </span>
-                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
-                      총 {rewards.reward_total}
-                    </span>
-                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
-                      남음 {rewards.reward_remaining}
+                {m.format && (
+                  <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/70 px-1.5 py-[2px] text-[10px] font-semibold text-white">
+                    {m.format === "Inst" ? "INST" : "FULL"}
+                  </span>
+                )}
+
+                {m.locked && (
+                  <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-md bg-black/45">
+                    <span className="rounded bg-black/70 px-1.5 py-[2px] text-[10px] leading-none text-white">
+                      {m.reason === "LOGIN_REQUIRED" ? "로그인이 필요합니다" : "구독 전용"}
                     </span>
                   </div>
-                </div>
+                )}
+              </div>
 
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2"> {/* 모바일 줄바꿈 */}
+                  <div className="min-w-0 flex items-center gap-2">
+                    <h3 className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                      {m.title}
+                    </h3>
+
+                    <div className="shrink-0 flex flex-wrap items-center gap-1">
+                      {m.category && (
+                        <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-800 dark:border-white/10 dark:bg-white/10 dark:text-zinc-100">
+                          {m.category}
+                        </span>
+                      )}
+                      {m.format && (
+                        <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-800 dark:border-white/10 dark:bg-white/10 dark:text-zinc-100">
+                          {m.format === "Inst" ? "INST" : "FULL"}
+                        </span>
+                      )}
+                      {(() => {
+                        const accessForBadge =
+                          m.access_type ??
+                          ((m.locked || m.reason === "SUBSCRIPTION_REQUIRED") ? "SUBSCRIPTION" : undefined);
+
+                        return accessForBadge ? (
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] ${
+                              accessForBadge === "FREE"
+                                ? "border border-emerald-300 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                : "border border-indigo-300 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300"
+                            }`}
+                          >
+                            {accessForBadge === "FREE" ? "무료" : "구독"}
+                          </span>
+                        ) : null;
+                      })()}
+                      {hasReward && (m.reward_remaining ?? 1) > 0 && (
+                        <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                          리워드
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 mt-1 sm:mt-0 flex flex-wrap items-center gap-1">
+                    {m.reward_amount != null && (
+                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+                        1회 {m.reward_amount}
+                      </span>
+                    )}
+                    {m.reward_total != null && (
+                      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                        총 {m.reward_total}
+                      </span>
+                    )}
+                    {m.reward_remaining != null && (
+                      <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                        남음 {m.reward_remaining}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <div className="mt-0.5 truncate text-xs text-zinc-500 dark:text-white/60">
                   {m.artist}
                 </div>
 
-                {/* 카테고리/태그 */}
-                <div className="mt-1 flex flex-wrap items-center gap-1">
-                  {ct.category && (
-                    <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-800 dark:border-white/10 dark:bg-white/10 dark:text-zinc-100">
-                      {ct.category}
-                    </span>
-                  )}
-                  {ct.tags?.slice(0, 5).map((tg) => (
-                    <span
-                      key={tg}
-                      className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-300"
-                    >
-                      #{tg}
-                    </span>
-                  ))}
-                </div>
+                {Array.isArray(tags) && tags.length > 0 && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {tags.slice(0, 6).map((t, idx) => (
+                      <span
+                        key={`${m.id}-${t}-${idx}`}
+                        className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-300"
+                      >
+                        #{t}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </li>
           );
         })}
       </ul>
 
-      {/* 더보기 */}
-      {hasMoreRef.current && !inflightRef.current && (
+      {items.length > 0 && hasMore && !inflightRef.current && (
         <div className="mt-3 flex justify-center">
           <button
-            onClick={fetchNext}
+            onClick={() => fetchNext()}
             className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-800 hover:bg-zinc-50 dark:border-white/15 dark:bg-white/10 dark:text-white/80 dark:hover:bg-white/15"
           >
-            더보기 (다음 20개)
+            더보기 (다음 {PAGE_SIZE}개)
           </button>
         </div>
       )}
 
-      {/* 무한스크롤 센티넬 */}
       <div ref={sentinelRef} className="h-6 w-full" />
 
-      {/* 상세 모달 */}
       <MusicDetailModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        item={detail}
-        myPlaylists={playlists}
-        onSubscribe={onSubscribe}
-        onAddToPlaylist={onAddToPlaylist}
-        onCreatePlaylist={onCreatePlaylist}
+        item={modalItem}
+        myPlaylists={[]}
+        onSubscribe={handleSubscribe}
+        usage={usage}
       />
 
-      {/* 구독 전용 안내 모달 */}
-      {gateOpen && (
-        <SubscribeGateModal onClose={() => setGateOpen(false)} />
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-zinc-900 p-6 shadow">
+            <h4 className="text-lg font-semibold text-zinc-900 dark:text-white">로그인이 필요합니다</h4>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-white/70">
+              이 트랙은 로그인 후 이용할 수 있어요.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-lg px-3 py-1.5 text-sm border border-zinc-300 dark:border-white/20"
+                onClick={() => setShowLoginModal(false)}
+              >
+                닫기
+              </button>
+              <a
+                href="/login"
+                className="rounded-lg px-3 py-1.5 text-sm bg-zinc-900 text-white dark:bg-white dark:text-black"
+              >
+                로그인하기
+              </a>
+            </div>
+          </div>
+        </div>
       )}
+
+{showSubscribeModal && (
+  <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+    <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-zinc-900 p-6 shadow">
+      <h4 className="text-lg font-semibold text-zinc-900 dark:text-white">구독이 필요합니다</h4>
+      <p className="mt-2 text-sm text-zinc-600 dark:text-white/70">
+        업그레이드(스탠다드/비즈니스) 구독 후 사용하실 수 있어요.
+      </p>
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          className="rounded-lg px-3 py-1.5 text-sm border border-zinc-300 dark:border-white/20"
+          onClick={() => setShowSubscribeModal(false)}
+        >
+          닫기
+        </button>
+        <button
+          className="rounded-lg px-3 py-1.5 text-sm bg-indigo-600 text-white dark:bg-indigo-500 disabled:opacity-60"
+          onClick={applyPaidUpgrade}
+          disabled={upgrading}
+        >
+          {upgrading ? "처리중..." : "지금 업그레이드"}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
     </>
   );
 }
-
-/* ---------------- 정렬 드롭다운 ---------------- */
 
 function SortDropdown({
   open,
   setOpen,
   sortKey,
   onSelect,
+  allowedKeys,
 }: {
   open: boolean;
   setOpen: React.Dispatch<React.SetStateAction<boolean>>;
   sortKey: SortKey;
   onSelect: (v: SortKey) => void;
+  allowedKeys?: SortKey[];
 }) {
+  const keys = allowedKeys ?? (Object.keys(SORT_LABELS) as SortKey[]);
   return (
-    <div className="relative">
+    <div className="relative z-30">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1 rounded-full border border-zinc-300 px-3 py-1.5 text-sm dark:border-white/20"
@@ -674,12 +939,15 @@ function SortDropdown({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-10 mt-1 w-44 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-md dark:border-white/10 dark:bg-zinc-800"
+          className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-md dark:border-white/10 dark:bg-zinc-800" /* z-40로 모바일 팝업 가림 방지 */
         >
-          {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+          {keys.map((k) => (
             <button
               key={k}
-              onClick={() => onSelect(k)}
+              onClick={() => {
+                onSelect(k);
+                setOpen(false);
+              }}
               className={`block w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-white/10 ${
                 sortKey === k ? "font-semibold text-teal-600 dark:text-teal-400" : ""
               }`}
@@ -694,66 +962,57 @@ function SortDropdown({
   );
 }
 
-/* ---------------- 상단 필터 바 ---------------- */
-
 function FilterBar({
-  selectedMoods,
-  selectedCategories,
+  categories,
+  selectedCategoryIds,
   selectedFormats,
-  open,
-  setOpen,
-  pushParams,
+  selectedMoods,
+  moodItems,
+  onChange,
 }: {
-  selectedMoods: string[];
-  selectedCategories: string[];
+  categories: Category[];
+  selectedCategoryIds: string[];
   selectedFormats: FormatLabel[];
-  open: null | "moods" | "categories" | "formats";
-  setOpen: React.Dispatch<React.SetStateAction<null | "moods" | "categories" | "formats">>;
-  pushParams: (patch: {
-    moods?: string[];
-    categories?: string[];
-    formats?: FormatLabel[];
-    clearCategorySingle?: boolean;
-    q?: string;
-  }) => void;
+  selectedMoods: string[];
+  moodItems: string[];
+  onChange: (p: { categories?: string[]; formats?: string[]; moods?: string[] }) => void;
 }) {
-  const toggleValue = <T extends string>(arr: T[], value: T) => {
-    const set = new Set(arr);
-    set.has(value) ? set.delete(value) : set.add(value);
-    return Array.from(set) as T[];
+  const [open, setOpen] = useState<null | "moods" | "categories" | "formats">(null);
+
+  const toggle = (arr: string[], val: string) => {
+    const s = new Set(arr);
+    s.has(val) ? s.delete(val) : s.add(val);
+    return Array.from(s);
   };
 
   return (
     <section className="rounded-xl">
-      {/* 상단 버튼 */}
-      <div className="mx-auto grid w-full max-w-[520px] grid-cols-3 gap-2">
+      <div className="mx-auto grid w-full max-w-[520px] grid-cols-3 gap-2 px-2 sm:px-0"> 
         <button
-          className={`h-10 rounded-lg text-sm ${
+          className={`h-10 rounded-lg text-sm transition-colors ${
             open === "moods"
               ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
-              : "border border-zinc-200 bg-white hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-white/90"
+              : "border border-zinc-200 bg-white hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-white/90 dark:hover:bg-zinc-800"
           }`}
           onClick={() => setOpen(open === "moods" ? null : "moods")}
         >
           분위기
         </button>
-
         <button
-          className={`h-10 rounded-lg text-sm ${
+          className={`h-10 rounded-lg text-sm transition-colors ${
             open === "categories"
               ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
-              : "border border-zinc-200 bg-white hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-white/90"
+              : "border border-zinc-200 bg-white hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-white/90 dark:hover:bg-zinc-800"
           }`}
           onClick={() => setOpen(open === "categories" ? null : "categories")}
         >
           장르
         </button>
-
         <button
-          className={`h-10 rounded-lg text-sm ${
+          className={`h-10 rounded-lg text-sm transition-colors ${
             open === "formats"
               ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
-              : "border border-zinc-200 bg-white hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-white/90"
+              : "border border-zinc-200 bg-white hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-white/90 dark:hover:bg-zinc-800"
           }`}
           onClick={() => setOpen(open === "formats" ? null : "formats")}
         >
@@ -761,121 +1020,132 @@ function FilterBar({
         </button>
       </div>
 
-      {/* 아코디언 패널 */}
-      <div className="mt-2 space-y-2">
-        <Accordion open={open === "moods"}>
-          <TagGrid
-            items={MOODS as unknown as string[]}
-            selected={selectedMoods}
-            onToggle={(m) => pushParams({ moods: toggleValue(selectedMoods, m) })}
-            onClear={() => pushParams({ moods: [] })}
-          />
-        </Accordion>
+      <div className="mt-2 space-y-2 px-2 sm:px-0">
+        {/* 분위기 */}
+        {moodItems.length > 0 && (
+      // FilterBar 컴포넌트 내부
 
-        <Accordion open={open === "categories"}>
-          <TagGrid
-            items={CATEGORIES as unknown as string[]}
-            selected={selectedCategories}
-            onToggle={(c) =>
-              pushParams({
-                categories: toggleValue(selectedCategories, c),
-                clearCategorySingle: true,
-              })
-            }
-            onClear={() => pushParams({ categories: [], clearCategorySingle: true })}
-          />
-        </Accordion>
+// ...중략...
+<Accordion open={open === "moods"}>
+  <TagGridString
+    items={moodItems}
+    selected={selectedMoods}
+    onToggle={(v) => {
+      onChange({ moods: toggle(selectedMoods, v) });
+      // setOpen(null); // 변경 시 닫기
+    }}
+    onClear={() => {
+      onChange({ moods: [] });
+      setOpen(null); // 초기화 시 닫기
+    }}
+  />
+</Accordion>
+ )}
+<Accordion open={open === "categories"}>
+  <TagGridCategory
+    items={categories}
+    selectedIds={selectedCategoryIds}
+    onToggle={(id) => {
+      onChange({ categories: toggle(selectedCategoryIds, String(id)) });
+      // setOpen(null);
+    }}
+    onClear={() => {
+      onChange({ categories: [] });
+      setOpen(null);
+    }}
+  />
+</Accordion>
+       
+<Accordion open={open === "formats"}>
+  <TagGridString
+    items={[...FORMATS]}
+    selected={selectedFormats}
+    onToggle={(v) => {
+      onChange({ formats: toggle(selectedFormats, v) });
+      // setOpen(null);
+    }}
+    onClear={() => {
+      onChange({ formats: [] });
+      setOpen(null);
+    }}
+  />
+</Accordion>
 
-        <Accordion open={open === "formats"}>
-          <TagGrid
-            items={FORMATS as unknown as string[]}
-            selected={selectedFormats}
-            onToggle={(f) => pushParams({ formats: toggleValue(selectedFormats, f as FormatLabel) })}
-            onClear={() => pushParams({ formats: [] })}
-          />
-        </Accordion>
       </div>
 
-      {/* 선택 칩 */}
-      {(selectedMoods.length > 0 || selectedCategories.length > 0 || selectedFormats.length > 0) && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {selectedMoods.map((m) => (
-            <span
-              key={m}
-              className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-2.5 py-1 text-xs text-teal-700 dark:text-teal-300"
-            >
-              {m}
-              <button
-                className="ml-1 rounded px-1 hover:bg-teal-500/20"
-                onClick={() => {
-                  const next = selectedMoods.filter((v) => v !== m);
-                  pushParams({ moods: next });
-                }}
-                aria-label={`${m} 제거`}
-              >
-                ✕
-              </button>
-            </span>
-          ))}
+      {selectedMoods.length || selectedCategoryIds.length || selectedFormats.length ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 px-2 sm:px-0"> 
+                       {selectedMoods.map((m, idx) => (
+                <span
+                  key={`mood-${m}-${idx}`}
+                  className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-2.5 py-1 text-xs text-teal-700 dark:bg-teal-500/20 dark:text-teal-300"
+                >
+                  {m}
+                  <button
+                    className="ml-1 rounded px-1 hover:bg-teal-500/20 dark:hover:bg-teal-500/25"
+                    onClick={() => onChange({ moods: selectedMoods.filter((x) => x !== m) })}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
 
-          {selectedCategories.map((c) => (
-            <span
-              key={c}
-              className="inline-flex items-center gap-1 rounded-full bg-zinc-200 px-2.5 py-1 text-xs text-zinc-800 dark:bg-white/10 dark:text-zinc-200"
-            >
-              {c}
-              <button
-                className="ml-1 rounded px-1 hover:bg-zinc-300 dark:hover:bg-white/15"
-                onClick={() => {
-                  const next = selectedCategories.filter((v) => v !== c);
-                  pushParams({ categories: next, clearCategorySingle: true });
-                }}
-                aria-label={`${c} 제거`}
-              >
-                ✕
-              </button>
-            </span>
-          ))}
+              {selectedCategoryIds.map((cid, idx) => {
+                const label =
+                  categories.find((c) => String(c.category_id) === cid)?.category_name ?? cid;
+                return (
+                  <span
+                    key={`cat-${cid}-${idx}`}
+                    className="inline-flex items-center gap-1 rounded-full bg-zinc-200 px-2.5 py-1 text-xs text-zinc-800 dark:bg-white/10 dark:text-zinc-200"
+                  >
+                    {label}
+                    <button
+                      className="ml-1 rounded px-1 hover:bg-zinc-300 dark:hover:bg-white/15"
+                      onClick={() =>
+                        onChange({
+                          categories: selectedCategoryIds.filter((x) => x !== cid),
+                        })
+                      }
+                    >
+                      ✕
+                    </button>
+                  </span>
+                );
+              })}
 
-          {selectedFormats.map((f) => (
-            <span
-              key={f}
-              className="inline-flex items-center gap-1 rounded-full bg-indigo-500/15 px-2.5 py-1 text-xs text-indigo-700 dark:text-indigo-300"
-            >
-              {f}
-              <button
-                className="ml-1 rounded px-1 hover:bg-indigo-500/20"
-                onClick={() => {
-                  const next = selectedFormats.filter((v) => v !== f);
-                  pushParams({ formats: next });
-                }}
-                aria-label={`${f} 제거`}
-              >
-                ✕
-              </button>
-            </span>
-          ))}
+              {selectedFormats.map((f, idx) => (
+                <span
+                  key={`fmt-${f}-${idx}`}
+                  className="inline-flex items-center gap-1 rounded-full bg-indigo-500/15 px-2.5 py-1 text-xs text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"
+                >
+                  {f}
+                  <button
+                    className="ml-1 rounded px-1 hover:bg-indigo-500/20 dark:hover:bg-indigo-500/25"
+                    onClick={() => onChange({ formats: selectedFormats.filter((x) => x !== f) })}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
 
-          <button
-            className="ml-1 inline-flex items-center rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-white/10"
-            onClick={() => {
-              pushParams({ moods: [], categories: [], formats: [], clearCategorySingle: true });
-            }}
-          >
-            모두 지우기
-          </button>
-        </div>
-      )}
-    </section>
+              <button
+                className="ml-1 inline-flex items-center rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-white/10"
+                onClick={() => onChange({ moods: [], categories: [], formats: [] })}
+              >
+                모두 지우기
+              </button>
+            </div>
+          ) : null}
+        </section>
   );
 }
 
-/* ---------------- Sub components ---------------- */
 
-function Accordion({ open, children }: { open: boolean; children: ReactNode }) {
+function Accordion({ open, children }: { open: boolean; children: React.ReactNode }) {
   return (
     <div
-      className={`overflow-hidden transition-all duration-300 ${open ? "max-h-64 opacity-100" : "max-h-0 opacity-0"}`}
+      className={`overflow-hidden transition-[max-height] duration-300 ease-out ${open ? "max-h-[520px]" : "max-h-0"}`}
+      style={{ willChange: "max-height" as any }}
     >
       <div className="rounded-xl border border-zinc-200 bg-white/80 p-2 dark:border-white/10 dark:bg-white/5">
         {children}
@@ -884,7 +1154,7 @@ function Accordion({ open, children }: { open: boolean; children: ReactNode }) {
   );
 }
 
-function TagGrid({
+function TagGridString({
   items,
   selected,
   onToggle,
@@ -898,10 +1168,10 @@ function TagGrid({
   return (
     <>
       <ul className="flex flex-wrap gap-2 p-1">
-        {items.map((it) => {
+        {items.map((it, idx) => {
           const active = selected.includes(it);
           return (
-            <li key={it}>
+            <li key={`${it}-${idx}`}>
               <button
                 type="button"
                 onClick={() => onToggle(it)}
@@ -929,34 +1199,50 @@ function TagGrid({
   );
 }
 
-/* ---------------- 구독 전용 안내 모달 ---------------- */
-
-function SubscribeGateModal({ onClose }: { onClose: () => void }) {
+function TagGridCategory({
+  items,
+  selectedIds,
+  onToggle,
+  onClear,
+}: {
+  items: Category[];
+  selectedIds: string[];
+  onToggle: (id: number) => void;
+  onClear: () => void;
+}) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative z-10 w-[92%] max-w-[420px] rounded-xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-white/10 dark:bg-zinc-900">
-        <h3 className="text-base font-semibold text-zinc-900 dark:text-white">
-          구독자 전용 음원입니다
-        </h3>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-          이 음원은 구독자만 사용할 수 있습니다. 구독 후 다시 시도해 주세요.
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-800 hover:bg-zinc-50 dark:border-white/15 dark:bg-zinc-800 dark:text-white/90 dark:hover:bg-zinc-700"
-            onClick={onClose}
-          >
-            닫기
-          </button>
-          <a
-            href="/pricing"
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700"
-          >
-            구독하러 가기
-          </a>
-        </div>
+    <>
+      <ul className="flex flex-wrap gap-2 p-1">
+        {items.map((c, idx) => {
+          const id = String(c.category_id);
+          const active = selectedIds.includes(id);
+          return (
+            <li key={`${id}-${idx}`}>
+              <button
+                type="button"
+                onClick={() => onToggle(c.category_id)}
+                className={`rounded-full px-3 py-1 text-sm transition ${
+                  active
+                    ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
+                    : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/15"
+                }`}
+                title={`#${c.category_name}`}
+              >
+                {c.category_name}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-1 flex justify-end px-1">
+        <button
+          onClick={onClear}
+          className="rounded-md px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-white/10"
+        >
+          전체 해제
+        </button>
       </div>
-    </div>
+    </>
   );
 }
+

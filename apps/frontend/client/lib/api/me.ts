@@ -2,7 +2,7 @@
 import { MeOverview, MeRewardsResponse, MePlaysResponse } from "@/lib/types/me";
 import { getAccessToken } from "@/lib/api/auth/token";
 import { HistoryResponse } from '@/lib/types/history';
-
+import { apiOrNull } from "@/lib/api/core/http";
 /* ---------------- helpers ---------------- */
 function normalizeToken(t: unknown): string | null {
   const s = typeof t === "string" ? t.trim() : "";
@@ -113,43 +113,48 @@ export async function fetchMeOverview(opts?: {
   timeoutMs?: number;
 }): Promise<MeOverview | null> {   // 반환 타입을 MeOverview | null 로 변경
   const baseRaw = (opts?.base ?? process.env.NEXT_PUBLIC_API_BASE ?? DEFAULT_BASE).replace(/\/+$/, "");
-  const url = `${baseRaw}/me/overview`;
-
-  const raw = opts?.token ?? (typeof getAccessToken === "function" ? await getAccessToken() : null);
-  const token = normalizeToken(raw);
-  const useCookie = !token;
-
-  const internal = new AbortController();
-  const signal = mergeSignals(opts?.signal, internal.signal);
-  const timeoutMs = Math.max(1, opts?.timeoutMs ?? 15000);
-  const timer = setTimeout(() => internal.abort("timeout"), timeoutMs);
-
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      cache: "no-store",
-      credentials: useCookie ? "include" : "omit",
-      headers: token
-        ? { Authorization: `Bearer ${token}`, Accept: "application/json" }
-        : { Accept: "application/json" },
-      signal,
-    });
-
-    if (res.status === 401) {
-      console.info("[fetchMeOverview] unauthorized → return null");
-      return null;  
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}${text ? ` :: ${text}` : ""}`);
-    }
-
-    const json = await res.json();
+    const json = await apiOrNull<any>("/me/overview");
+    if (!json) return null;
     return adaptMe(json, baseRaw);
-  } finally {
-    clearTimeout(timer);
-  }
+  // const url = `${baseRaw}/me/overview`;
+
+  // const raw = opts?.token ?? (typeof getAccessToken === "function" ? await getAccessToken() : null);
+  // const token = normalizeToken(raw);
+  // const useCookie = !token;
+
+  // const internal = new AbortController();
+  // const signal = mergeSignals(opts?.signal, internal.signal);
+  // const timeoutMs = Math.max(1, opts?.timeoutMs ?? 15000);
+  // const timer = setTimeout(() => internal.abort("timeout"), timeoutMs);
+
+  // try {
+  //   const headers: Record<string, string> = { Accept: "application/json" };
+  //   if (token) headers.Authorization = `Bearer ${token}`;
+    
+  //   const res = await fetch(url, {
+  //     method: "GET",
+  //     mode: "cors",
+  //     cache: "no-store",
+  //     credentials: "include",         
+  //     headers,
+  //     signal,
+  //   });
+
+  //   if (res.status === 401) {
+  //     console.info("[fetchMeOverview] unauthorized → return null");
+  //     return null;  
+  //   }
+
+  //   if (!res.ok) {
+  //     const text = await res.text().catch(() => "");
+  //     throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}${text ? ` :: ${text}` : ""}`);
+  //   }
+
+  //   const json = await res.json();
+  //   return adaptMe(json, baseRaw);
+  // } finally {
+  //   clearTimeout(timer);
+  // }
 }
 
 
@@ -337,7 +342,12 @@ export async function removeUsingTrack(musicId: number) {
     credentials: token ? "omit" : "include",
   });
 
+  if (res.status === 204) return null;
+
   const txt = await res.text();
   if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
-  return JSON.parse(txt || "{}"); // MeService.getMe() 형태로 돌아옴
+  if (!txt || !txt.trim()) return null;
+
+  const json = JSON.parse(txt);
+  return adaptMe(json, base); 
 }

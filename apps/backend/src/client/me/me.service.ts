@@ -562,7 +562,6 @@ export class MeService {
     `);
     const total = Number((cntRes as any).rows?.[0]?.c ?? '0');
   
-    // 리스트: p.meta 제거 → NULL로 대체
     const listRes = await this.db.execute(sql`
       SELECT
         p.id AS play_id,
@@ -572,7 +571,7 @@ export class MeService {
            AND r.status = ANY(${sql`ARRAY['pending'::reward_status,'successed'::reward_status]`})
           THEN TRUE ELSE FALSE
         END AS is_valid,
-        NULL::jsonb AS meta,                    -- ⬅⬅⬅ 여기!
+        NULL::jsonb AS meta,
         r.id   AS reward_id,
         r.reward_code,
         r.amount::text AS amount,
@@ -606,12 +605,12 @@ export class MeService {
       })),
     };
   }
+
   async removeUsing(companyIdNum: number, musicIdNum: number) {
-    const companyId = companyIdNum; // company_musics.company_id 가 number 타입이라면 그대로 사용
+    const companyId = companyIdNum;
     const musicId = musicIdNum;
   
-    return await this.db.transaction(async (tx: any) => {
-      // 존재 확인 (없어도 idempotent 하게 처리하려면 선택)
+    const changed = await this.db.transaction(async (tx: any) => {
       const chk = await tx.execute(sql`
         SELECT 1
         FROM ${company_musics}
@@ -620,20 +619,17 @@ export class MeService {
       `);
   
       if (!chk?.rows?.length) {
-        // 이미 제거됐거나 없으면 현재 me 상태만 반환(아이덤포턴트)
-        return this.getMe(companyId);
-        // 또는 에러 원하면:
-        // throw new BadRequestException('이미 삭제되었거나 사용 중이 아닙니다.');
+        return false; 
       }
   
-      // 연결만 제거 (이력/리워드는 그대로 보존)
       await tx.execute(sql`
         DELETE FROM ${company_musics}
         WHERE company_id = ${companyId} AND music_id = ${musicId}
       `);
   
-      // 최신 마이페이지 오버뷰 반환
-      return this.getMe(companyId);
+      return true; 
     });
+  
+    return this.getMe(companyId);
   }
 }

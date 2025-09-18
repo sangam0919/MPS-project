@@ -4,6 +4,7 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --app-header-height: 0px;
 }
 
 @theme inline {

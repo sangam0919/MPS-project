@@ -22,26 +22,20 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased
-                    min-h-screen bg-white text-zinc-900
-                    dark:bg-zinc-900 dark:text-zinc-100`}
-      >
-        {/* 👇 모든 페이지 전환마다 로딩 오버레이 */}
-        <RouteLoader />
-
-        <Providers>
-          <ThemeProvider>
-            <Header />
-            <AudioPlayerProvider>
-              {children}
-              <LayoutClient />
-
-              <RouteLoader />
-            </AudioPlayerProvider>
-          </ThemeProvider>
-        </Providers>
-      </body>
-    </html>
-  );
+    <body className="...">
+      <RouteLoader />
+      <Providers>
+        <ThemeProvider>
+          <Header />
+          <AudioPlayerProvider>
+            {children}
+            <LayoutClient /> {/* 여기서는 modal-root 제거! */}
+            {/* <RouteLoader /> ← 이건 중복이니 삭제 권장 */}
+          </AudioPlayerProvider>
+        </ThemeProvider>
+      </Providers>
+      <div id="modal-root" />
+    </body>
+  </html>
+);
 }
