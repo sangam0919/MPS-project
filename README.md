@@ -19,9 +19,13 @@
 
 ### 팀원 소개 및 역할
 
-| 이름 | 역할 | 주요 담당 업무 |
-|------|------|----------------|
-| 이상암 | 클라이언트 풀스택 개발자 | Next.js 기반 클라이언트 설계 및 구현, 사용자 페이지/마이페이지/통계 화면, API 연동 |
+| 이름       | 역할                   | 주요 담당 업무                                                 | GitHub                                                                                                    |
+| -------- | -------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 김민교 (팀장) | 스마트 컨트랙트 / 음원 API 개발 | Ethereum 기반 스마트 컨트랙트 설계 및 배포, 음원 등록/재생 API 구현            | <img src="https://github.com/Sialsry.png" width="60px"><br>[Sialsry](https://github.com/Sialsry)          |
+| 이상암      | 클라이언트 풀스택 개발자        | Next.js 기반 클라이언트 설계 및 구현, 사용자 페이지·마이페이지·통계 화면 개발, API 연동 | <img src="https://github.com/sangam0919.png" width="60px"><br>[sangam0919](https://github.com/sangam0919) |
+| 김지은      | 백오피스 개발              | 기업 회원 관리, 관리자 페이지 개발, 데이터 검증 및 통계 조회 기능 구현               | <img src="https://github.com/zzeen2.png" width="60px"><br>[zzeen2](https://github.com/zzeen2)             |
+
+
 
 ---
 
@@ -42,25 +46,26 @@
 
 ### 🛠 기술 스택
 ## 프론트엔드
-- Next.js  
-- TypeScript  
-- Tailwind CSS  
-- Chart.js  
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![Chart.js](https://img.shields.io/badge/Chart.js-FF6384?style=for-the-badge&logo=chartdotjs&logoColor=white)
 
 ## 백엔드 (연동)
-- NestJS  
-- PostgreSQL  
-- Drizzle ORM  
-- Solidity (스마트 컨트랙트)  
-- JWT  
+![NestJS](https://img.shields.io/badge/NestJS-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![Drizzle](https://img.shields.io/badge/Drizzle-00E599?style=for-the-badge&logo=drizzle&logoColor=white)
+![Solidity](https://img.shields.io/badge/Solidity-363636?style=for-the-badge&logo=solidity&logoColor=white)
+![JWT](https://img.shields.io/badge/JWT-000000?style=for-the-badge&logo=jsonwebtokens&logoColor=white)
+
 
 ## 협업 툴 및 기타
-- AWS  
-- Git  
-- Notion  
-- Postman  
-- Swagger  
-- OpenAI  
+![AWS](https://img.shields.io/badge/AWS-232F3E?style=for-the-badge&logo=amazonwebservices&logoColor=white)
+![Git](https://img.shields.io/badge/Git-F05032?style=for-the-badge&logo=git&logoColor=white)
+![Notion](https://img.shields.io/badge/Notion-000000?style=for-the-badge&logo=notion&logoColor=white)
+![Postman](https://img.shields.io/badge/Postman-FF6C37?style=for-the-badge&logo=postman&logoColor=white)
+![Swagger](https://img.shields.io/badge/Swagger-85EA2D?style=for-the-badge&logo=swagger&logoColor=black)
+![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)
 
 ---
 
